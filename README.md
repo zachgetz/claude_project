@@ -1,3 +1,3 @@
 # WhatsApp Daily Standup Bot
 
-A Django + Twilio bot for automating daily standup via WhatsApp.
+A Django + Twilio bot for daily standups via WhatsApp.
