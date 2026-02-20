@@ -1,0 +1,9 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "gunicorn standup_bot.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --log-file -"
+healthcheckPath = "/health/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
