@@ -3,3 +3,7 @@ twilio>=8.0
 djangorestframework>=3.14
 python-decouple>=3.8
 gunicorn>=21.0
+celery>=5.3
+redis>=5.0
+django-celery-beat>=2.5
+django-celery-results>=2.5
