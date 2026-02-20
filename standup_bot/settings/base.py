@@ -1,9 +1,10 @@
-from decouple import config
 from pathlib import Path
+from decouple import config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
+DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='').split(',')
 
 INSTALLED_APPS = [
@@ -15,6 +16,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'django_celery_beat',
+    'apps.bot',
     'apps.standup',
 ]
 
@@ -48,11 +50,9 @@ TIME_ZONE = 'UTC'
 USE_TZ = True
 LANGUAGE_CODE = 'en-us'
 USE_I18N = True
-
 STATIC_URL = '/static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Twilio
-TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
-TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
-TWILIO_WHATSAPP_NUMBER = config('TWILIO_WHATSAPP_NUMBER', default='')
+TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN')
+TWILIO_WHATSAPP_NUMBER = config('TWILIO_WHATSAPP_NUMBER')
