@@ -1,0 +1,5 @@
+Django>=4.2,<5.0
+twilio>=8.0
+djangorestframework>=3.14
+python-decouple>=3.8
+gunicorn>=21.0
