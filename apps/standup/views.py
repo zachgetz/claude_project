@@ -4,10 +4,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.http import HttpResponse
 from twilio.twiml.messaging_response import MessagingResponse
+from apps.standup.permissions import TwilioSignaturePermission
 
 
 class WhatsAppWebhookView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [TwilioSignaturePermission]
 
     def post(self, request, *args, **kwargs):
         from_number = request.data.get('From', '')
