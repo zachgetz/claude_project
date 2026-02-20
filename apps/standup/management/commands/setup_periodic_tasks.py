@@ -2,7 +2,10 @@
 Management command: setup_periodic_tasks
 
 Idempotently creates (or updates) the django-celery-beat PeriodicTask
-records for send_morning_checkin and send_evening_digest.
+records for all three standup tasks:
+  - send_morning_checkin
+  - send_evening_digest
+  - purge_old_standup_entries
 
 Usage:
     python manage.py setup_periodic_tasks
@@ -29,10 +32,17 @@ class Command(BaseCommand):
             default=getattr(settings, 'EVENING_DIGEST_HOUR', 18),
             help='UTC hour for the evening digest (default: 18)',
         )
+        parser.add_argument(
+            '--purge-hour',
+            type=int,
+            default=getattr(settings, 'PURGE_TASK_HOUR', 2),
+            help='UTC hour for the nightly purge task (default: 2)',
+        )
 
     def handle(self, *args, **options):
         morning_hour = options['morning_hour']
         evening_hour = options['evening_hour']
+        purge_hour = options['purge_hour']
 
         # --- Morning check-in ---
         morning_schedule, _ = CrontabSchedule.objects.get_or_create(
@@ -42,7 +52,7 @@ class Command(BaseCommand):
             day_of_month='*',
             month_of_year='*',
         )
-        task, created = PeriodicTask.objects.update_or_create(
+        _, created = PeriodicTask.objects.update_or_create(
             name='send_morning_checkin',
             defaults={
                 'crontab': morning_schedule,
@@ -51,10 +61,10 @@ class Command(BaseCommand):
                 'description': f'Morning check-in WhatsApp prompt at {morning_hour:02d}:00 UTC.',
             },
         )
-        action = 'Created' if created else 'Updated'
         self.stdout.write(
             self.style.SUCCESS(
-                f'{action} periodic task: send_morning_checkin (hour={morning_hour})'
+                f'{"Created" if created else "Updated"} periodic task: '
+                f'send_morning_checkin (hour={morning_hour})'
             )
         )
 
@@ -66,7 +76,7 @@ class Command(BaseCommand):
             day_of_month='*',
             month_of_year='*',
         )
-        task, created = PeriodicTask.objects.update_or_create(
+        _, created = PeriodicTask.objects.update_or_create(
             name='send_evening_digest',
             defaults={
                 'crontab': evening_schedule,
@@ -75,9 +85,36 @@ class Command(BaseCommand):
                 'description': f'Evening digest WhatsApp message at {evening_hour:02d}:00 UTC.',
             },
         )
-        action = 'Created' if created else 'Updated'
         self.stdout.write(
             self.style.SUCCESS(
-                f'{action} periodic task: send_evening_digest (hour={evening_hour})'
+                f'{"Created" if created else "Updated"} periodic task: '
+                f'send_evening_digest (hour={evening_hour})'
+            )
+        )
+
+        # --- Nightly purge ---
+        purge_schedule, _ = CrontabSchedule.objects.get_or_create(
+            minute='0',
+            hour=str(purge_hour),
+            day_of_week='*',
+            day_of_month='*',
+            month_of_year='*',
+        )
+        _, created = PeriodicTask.objects.update_or_create(
+            name='purge_old_standup_entries',
+            defaults={
+                'crontab': purge_schedule,
+                'task': 'apps.standup.tasks.purge_old_standup_entries',
+                'enabled': True,
+                'description': (
+                    f'Delete StandupEntry records older than STANDUP_RETENTION_DAYS '
+                    f'days at {purge_hour:02d}:00 UTC.'
+                ),
+            },
+        )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'{"Created" if created else "Updated"} periodic task: '
+                f'purge_old_standup_entries (hour={purge_hour})'
             )
         )

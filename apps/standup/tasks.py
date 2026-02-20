@@ -1,5 +1,4 @@
 import logging
-import datetime
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
@@ -14,11 +13,6 @@ MORNING_CHECKIN_MESSAGE = (
     "- What did you work on yesterday?\n"
     "- What are you working on today?\n"
     "- Any blockers?"
-)
-
-EVENING_NO_ENTRIES_MESSAGE = (
-    "Hey! \u{1F31D} Looks like you haven't submitted a standup today. "
-    "Don't forget to log your update!"
 )
 
 
@@ -122,7 +116,7 @@ def send_evening_digest(self):
         else:
             message_body = (
                 f"\U0001f31d Hey! No standup entry recorded today ({today}). "
-                "Make sure to log your update — reply here anytime!"
+                "Make sure to log your update \u2014 reply here anytime!"
             )
 
         try:
@@ -144,3 +138,26 @@ def send_evening_digest(self):
         success_count,
         error_count,
     )
+
+
+@shared_task(bind=True)
+def purge_old_standup_entries(self):
+    """
+    Celery task: delete StandupEntry records older than
+    STANDUP_RETENTION_DAYS (default: 30) to prevent unbounded table growth.
+
+    The retention period is configurable via the STANDUP_RETENTION_DAYS
+    Django setting (int, number of days).
+    """
+    retention_days = getattr(settings, 'STANDUP_RETENTION_DAYS', 30)
+    cutoff = timezone.now() - timezone.timedelta(days=retention_days)
+    deleted_count, _ = StandupEntry.objects.filter(
+        created_at__lt=cutoff
+    ).delete()
+    logger.info(
+        'purge_old_standup_entries: deleted %d entries older than %d days (cutoff: %s).',
+        deleted_count,
+        retention_days,
+        cutoff.date(),
+    )
+    return deleted_count
