@@ -16,6 +16,10 @@ class WhatsAppWebhookView(APIView):
         from_number = request.data.get('From', '')
         body = request.data.get('Body', '')
 
+        # Handle /summary command BEFORE any saving
+        if body.strip().lower() == '/summary':
+            return self._handle_summary(from_number)
+
         if not body.strip():
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
@@ -39,5 +43,27 @@ class WhatsAppWebhookView(APIView):
 
         response = MessagingResponse()
         response.message(reply_text)
+
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_summary(self, from_number):
+        current_week = datetime.datetime.now().isocalendar()[1]
+
+        entries = StandupEntry.objects.filter(
+            phone_number=from_number,
+            week_number=current_week,
+        ).order_by('created_at')
+
+        response = MessagingResponse()
+
+        if not entries.exists():
+            response.message("No entries yet this week.")
+        else:
+            lines = [f"Week {current_week} summary:\n"]
+            for entry in entries:
+                date_str = entry.created_at.strftime('%Y-%m-%d')
+                lines.append(f"{date_str}: {entry.message}")
+            reply_text = "\n".join(lines)
+            response.message(reply_text)
 
         return HttpResponse(str(response), content_type='application/xml')
