@@ -140,7 +140,7 @@ def send_evening_digest(self):
     )
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def purge_old_standup_entries(self):
     """
     Celery task: delete StandupEntry records older than
@@ -149,15 +149,19 @@ def purge_old_standup_entries(self):
     The retention period is configurable via the STANDUP_RETENTION_DAYS
     Django setting (int, number of days).
     """
-    retention_days = getattr(settings, 'STANDUP_RETENTION_DAYS', 30)
-    cutoff = timezone.now() - timezone.timedelta(days=retention_days)
-    deleted_count, _ = StandupEntry.objects.filter(
-        created_at__lt=cutoff
-    ).delete()
-    logger.info(
-        'purge_old_standup_entries: deleted %d entries older than %d days (cutoff: %s).',
-        deleted_count,
-        retention_days,
-        cutoff.date(),
-    )
-    return deleted_count
+    try:
+        retention_days = getattr(settings, 'STANDUP_RETENTION_DAYS', 30)
+        cutoff = timezone.now() - timezone.timedelta(days=retention_days)
+        deleted_count, _ = StandupEntry.objects.filter(
+            created_at__lt=cutoff
+        ).delete()
+        logger.info(
+            'purge_old_standup_entries: deleted %d entries older than %d days (cutoff: %s).',
+            deleted_count,
+            retention_days,
+            cutoff.date(),
+        )
+        return deleted_count
+    except Exception as exc:
+        logger.error('purge_old_standup_entries failed: %s', exc)
+        raise self.retry(exc=exc)
