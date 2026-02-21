@@ -2,6 +2,8 @@ from decouple import config
 from google_auth_oauthlib.flow import Flow
 
 SCOPES = [
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
     'https://www.googleapis.com/auth/calendar.readonly',
     'https://www.googleapis.com/auth/calendar.events',
 ]
@@ -11,6 +13,7 @@ def get_oauth_flow(redirect_uri=None):
     """
     Build and return a Google OAuth2 Flow using GOOGLE_CLIENT_ID and
     GOOGLE_CLIENT_SECRET from environment variables.
+    Includes openid + userinfo.email scopes to identify the Google account.
     """
     client_config = {
         'web': {
