@@ -2,7 +2,8 @@
 Unit tests for apps.calendar_bot.tasks.
 
 All Google Calendar API and Twilio calls are mocked.
-Celery tasks are called directly (synchronously) — no broker needed.
+Celery tasks are called directly (synchronously) -- no broker needed.
+Updated for TZA-78 multi-account: tasks use get_events_for_date and token FK.
 """
 import datetime
 from unittest.mock import patch, MagicMock, call
@@ -22,14 +23,16 @@ TWILIO_SETTINGS = dict(
 )
 
 PATCH_TWILIO = 'apps.calendar_bot.tasks.Client'
-PATCH_CAL_SVC = 'apps.calendar_bot.tasks.get_calendar_service'
+# New tasks.py uses get_events_for_date, not get_calendar_service
+PATCH_GET_EVENTS = 'apps.calendar_bot.tasks.get_events_for_date'
 PATCH_GET_USER_TZ = 'apps.calendar_bot.tasks.get_user_tz'
 
 
 def _make_token(phone='+1111111111', digest_enabled=True, digest_hour=8, digest_minute=0,
-                digest_always=False):
+                digest_always=False, email='test@example.com'):
     return CalendarToken.objects.create(
         phone_number=phone,
+        account_email=email,
         access_token='access_abc',
         refresh_token='refresh_xyz',
         timezone='UTC',
@@ -40,11 +43,18 @@ def _make_token(phone='+1111111111', digest_enabled=True, digest_hour=8, digest_
     )
 
 
-def _make_cal_event(title, hour, minute=0, all_day=False):
-    if all_day:
-        return {'summary': title, 'start': {'date': '2026-02-21'}}
+def _make_cal_event_dict(title, hour, minute=0):
+    """Build an event dict in get_events_for_date format."""
+    import pytz
+    import datetime
     dt = datetime.datetime(2026, 2, 21, hour, minute, tzinfo=pytz.UTC)
-    return {'summary': title, 'start': {'dateTime': dt.isoformat()}}
+    return {
+        'start': dt,
+        'start_str': f'{hour:02d}:{minute:02d}',
+        'summary': title,
+        'end': (dt + datetime.timedelta(hours=1)).isoformat(),
+        'raw': {},
+    }
 
 
 @override_settings(**TWILIO_SETTINGS)
@@ -59,31 +69,22 @@ class MorningDigestTaskTests(TestCase):
         from apps.calendar_bot.tasks import send_morning_meetings_digest
         send_morning_meetings_digest()
 
-    def _make_mock_service(self, events):
-        mock_svc = MagicMock()
-        mock_svc.events().list().execute.return_value = {'items': events}
-        return mock_svc
-
     @patch(PATCH_GET_USER_TZ)
-    @patch(PATCH_CAL_SVC)
+    @patch(PATCH_GET_EVENTS)
     @patch(PATCH_TWILIO)
-    def test_sends_digest_when_digest_hour_matches(self, mock_twilio_cls, mock_cal_svc, mock_tz):
+    def test_sends_digest_when_digest_hour_matches(self, mock_twilio_cls, mock_get_events, mock_tz):
         """User with matching digest_hour/minute gets a WhatsApp message."""
-        token = _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0)
+        _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0)
 
         user_tz = pytz.UTC
         mock_tz.return_value = user_tz
+        mock_get_events.return_value = [_make_cal_event_dict('Standup', 9)]
 
-        # Simulate now_local.hour == 8, minute == 0
         with patch('apps.calendar_bot.tasks.datetime') as mock_dt:
             fake_now = datetime.datetime(2026, 2, 21, 8, 0, tzinfo=pytz.UTC)
             mock_dt.datetime.now.return_value = fake_now
             mock_dt.datetime.fromisoformat = datetime.datetime.fromisoformat
             mock_dt.timedelta = datetime.timedelta
-
-            mock_cal_svc.return_value = self._make_mock_service([
-                _make_cal_event('Standup', 9)
-            ])
 
             mock_client = MagicMock()
             mock_twilio_cls.return_value = mock_client
@@ -95,9 +96,9 @@ class MorningDigestTaskTests(TestCase):
         self.assertIn('Standup', body)
 
     @patch(PATCH_GET_USER_TZ)
-    @patch(PATCH_CAL_SVC)
+    @patch(PATCH_GET_EVENTS)
     @patch(PATCH_TWILIO)
-    def test_skips_when_digest_disabled(self, mock_twilio_cls, mock_cal_svc, mock_tz):
+    def test_skips_when_digest_disabled(self, mock_twilio_cls, mock_get_events, mock_tz):
         """Users with digest_enabled=False are not sent any message."""
         _make_token(phone=self.PHONE_A, digest_enabled=False)
 
@@ -109,22 +110,21 @@ class MorningDigestTaskTests(TestCase):
         mock_client.messages.create.assert_not_called()
 
     @patch(PATCH_GET_USER_TZ)
-    @patch(PATCH_CAL_SVC)
+    @patch(PATCH_GET_EVENTS)
     @patch(PATCH_TWILIO)
-    def test_skips_empty_day_unless_digest_always(self, mock_twilio_cls, mock_cal_svc, mock_tz):
+    def test_skips_empty_day_unless_digest_always(self, mock_twilio_cls, mock_get_events, mock_tz):
         """No events + digest_always=False -> no message sent."""
-        token = _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, digest_always=False)
+        _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, digest_always=False)
 
         user_tz = pytz.UTC
         mock_tz.return_value = user_tz
+        mock_get_events.return_value = []  # no events
 
         with patch('apps.calendar_bot.tasks.datetime') as mock_dt:
             fake_now = datetime.datetime(2026, 2, 21, 8, 0, tzinfo=pytz.UTC)
             mock_dt.datetime.now.return_value = fake_now
             mock_dt.datetime.fromisoformat = datetime.datetime.fromisoformat
             mock_dt.timedelta = datetime.timedelta
-
-            mock_cal_svc.return_value = self._make_mock_service([])  # no events
 
             mock_client = MagicMock()
             mock_twilio_cls.return_value = mock_client
@@ -134,22 +134,21 @@ class MorningDigestTaskTests(TestCase):
         mock_client.messages.create.assert_not_called()
 
     @patch(PATCH_GET_USER_TZ)
-    @patch(PATCH_CAL_SVC)
+    @patch(PATCH_GET_EVENTS)
     @patch(PATCH_TWILIO)
-    def test_sends_no_meetings_when_digest_always(self, mock_twilio_cls, mock_cal_svc, mock_tz):
+    def test_sends_no_meetings_when_digest_always(self, mock_twilio_cls, mock_get_events, mock_tz):
         """digest_always=True + no events -> still sends 'No meetings' message."""
-        token = _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, digest_always=True)
+        _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, digest_always=True)
 
         user_tz = pytz.UTC
         mock_tz.return_value = user_tz
+        mock_get_events.return_value = []
 
         with patch('apps.calendar_bot.tasks.datetime') as mock_dt:
             fake_now = datetime.datetime(2026, 2, 21, 8, 0, tzinfo=pytz.UTC)
             mock_dt.datetime.now.return_value = fake_now
             mock_dt.datetime.fromisoformat = datetime.datetime.fromisoformat
             mock_dt.timedelta = datetime.timedelta
-
-            mock_cal_svc.return_value = self._make_mock_service([])
 
             mock_client = MagicMock()
             mock_twilio_cls.return_value = mock_client
@@ -161,20 +160,20 @@ class MorningDigestTaskTests(TestCase):
         self.assertIn('No meetings', body)
 
     @patch(PATCH_GET_USER_TZ)
-    @patch(PATCH_CAL_SVC)
+    @patch(PATCH_GET_EVENTS)
     @patch(PATCH_TWILIO)
-    def test_per_user_failure_does_not_stop_other_users(self, mock_twilio_cls, mock_cal_svc, mock_tz):
+    def test_per_user_failure_does_not_stop_other_users(self, mock_twilio_cls, mock_get_events, mock_tz):
         """Exception for user A should not prevent user B getting digest."""
-        token_a = _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0)
-        token_b = _make_token(phone=self.PHONE_B, digest_hour=8, digest_minute=0)
+        _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, email='a@example.com')
+        _make_token(phone=self.PHONE_B, digest_hour=8, digest_minute=0, email='b@example.com')
 
         user_tz = pytz.UTC
         mock_tz.return_value = user_tz
 
-        # First user's cal service raises, second succeeds
-        mock_cal_svc.side_effect = [
+        # First phone's get_events_for_date raises, second succeeds
+        mock_get_events.side_effect = [
             Exception('Google API Error'),
-            self._make_mock_service([_make_cal_event('Sync', 9)]),
+            [_make_cal_event_dict('Sync', 9)],
         ]
 
         mock_client = MagicMock()
@@ -192,6 +191,35 @@ class MorningDigestTaskTests(TestCase):
         # User B still gets a message
         self.assertGreaterEqual(mock_client.messages.create.call_count, 1)
 
+    @patch(PATCH_GET_USER_TZ)
+    @patch(PATCH_GET_EVENTS)
+    @patch(PATCH_TWILIO)
+    def test_two_tokens_same_phone_sends_one_digest(self, mock_twilio_cls, mock_get_events, mock_tz):
+        """Two tokens for the same phone should result in only ONE merged digest message."""
+        _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, email='work@example.com')
+        _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, email='personal@example.com')
+
+        user_tz = pytz.UTC
+        mock_tz.return_value = user_tz
+        mock_get_events.return_value = [
+            _make_cal_event_dict('Work Meeting', 9),
+            _make_cal_event_dict('Personal Event', 10),
+        ]
+
+        mock_client = MagicMock()
+        mock_twilio_cls.return_value = mock_client
+
+        with patch('apps.calendar_bot.tasks.datetime') as mock_dt:
+            fake_now = datetime.datetime(2026, 2, 21, 8, 0, tzinfo=pytz.UTC)
+            mock_dt.datetime.now.return_value = fake_now
+            mock_dt.datetime.fromisoformat = datetime.datetime.fromisoformat
+            mock_dt.timedelta = datetime.timedelta
+
+            self._run_task()
+
+        # Should send exactly ONE message (not two)
+        self.assertEqual(mock_client.messages.create.call_count, 1)
+
 
 @override_settings(**TWILIO_SETTINGS)
 class RenewWatchChannelsTests(TestCase):
@@ -200,35 +228,56 @@ class RenewWatchChannelsTests(TestCase):
     PHONE = '+3333333333'
 
     def setUp(self):
-        CalendarToken.objects.create(
+        self.token = CalendarToken.objects.create(
             phone_number=self.PHONE,
+            account_email='renew@example.com',
             access_token='a',
             refresh_token='b',
         )
 
-    @patch('apps.calendar_bot.sync.register_watch_channel')
-    def test_renews_expiring_channels(self, mock_register):
+    @patch('apps.calendar_bot.tasks.register_watch_channel')
+    def test_renews_expiring_channels_with_token(self, mock_register):
+        """Channels with a token FK that are expiring should be renewed."""
         from apps.calendar_bot.tasks import renew_watch_channels
 
         now = datetime.datetime.now(tz=pytz.UTC)
-        # Create channel expiring in 12 hours (within threshold of 24h)
+        # Create channel expiring in 12 hours (within threshold of 24h), with token FK
         channel = CalendarWatchChannel.objects.create(
             phone_number=self.PHONE,
+            token=self.token,
             expiry=now + datetime.timedelta(hours=12),
         )
 
         renew_watch_channels()
 
-        mock_register.assert_called_once_with(self.PHONE)
+        mock_register.assert_called_once_with(self.token)
 
-    @patch('apps.calendar_bot.sync.register_watch_channel')
+    @patch('apps.calendar_bot.tasks.register_watch_channel')
+    def test_skips_channels_without_token_fk(self, mock_register):
+        """Channels without a token FK (legacy) should be skipped."""
+        from apps.calendar_bot.tasks import renew_watch_channels
+
+        now = datetime.datetime.now(tz=pytz.UTC)
+        # Channel has no token FK
+        CalendarWatchChannel.objects.create(
+            phone_number=self.PHONE,
+            token=None,
+            expiry=now + datetime.timedelta(hours=12),
+        )
+
+        renew_watch_channels()
+
+        mock_register.assert_not_called()
+
+    @patch('apps.calendar_bot.tasks.register_watch_channel')
     def test_skips_channels_not_expiring_soon(self, mock_register):
         from apps.calendar_bot.tasks import renew_watch_channels
 
         now = datetime.datetime.now(tz=pytz.UTC)
-        # Channel expires in 48 hours — outside 24-hour threshold
-        channel = CalendarWatchChannel.objects.create(
+        # Channel expires in 48 hours -- outside 24-hour threshold
+        CalendarWatchChannel.objects.create(
             phone_number=self.PHONE,
+            token=self.token,
             expiry=now + datetime.timedelta(hours=48),
         )
 
@@ -236,7 +285,7 @@ class RenewWatchChannelsTests(TestCase):
 
         mock_register.assert_not_called()
 
-    @patch('apps.calendar_bot.sync.register_watch_channel')
+    @patch('apps.calendar_bot.tasks.register_watch_channel')
     def test_no_channels_does_not_crash(self, mock_register):
         from apps.calendar_bot.tasks import renew_watch_channels
 
