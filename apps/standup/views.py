@@ -72,6 +72,7 @@ HELP_TEXT = (
     '\u2022 "connect calendar" \u2014 add another Google account\n'
     '\u2022 "my calendars" \u2014 list connected accounts\n'
     '\u2022 "remove calendar [email or label]" \u2014 remove an account\n'
+    '\u2022 "calendar status" \u2014 diagnostics (watch channel, last sync)\n'
     "\n"
     "\u2699\ufe0f Settings:\n"
     '\u2022 "set digest 7:30am" \u2014 change briefing time\n'
@@ -129,6 +130,11 @@ class WhatsAppWebhookView(APIView):
         if body_lower == 'my calendars':
             logger.info('Routing to my_calendars handler: phone=%s', from_number)
             return self._handle_my_calendars(from_number)
+
+        # Handle calendar status (diagnostic command)
+        if body_lower == 'calendar status':
+            logger.info('Routing to calendar_status handler: phone=%s', from_number)
+            return self._handle_calendar_status(from_number)
 
         # Handle remove calendar [email or label]
         if body_lower.startswith('remove calendar'):
@@ -268,6 +274,59 @@ class WhatsAppWebhookView(APIView):
                 label_display = token.account_label or 'primary'
                 lines.append(f'{i}. {label_display}: {email_display}')
             response.message('\n'.join(lines))
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_calendar_status(self, from_number):
+        """
+        Diagnostic command: show connected accounts, watch channel expiry,
+        last sync time per account, and whether WEBHOOK_BASE_URL is configured.
+        """
+        from apps.calendar_bot.models import CalendarToken, CalendarWatchChannel
+
+        webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', None)
+        webhook_status = (
+            f'\u2705 WEBHOOK_BASE_URL: {webhook_base_url}'
+            if webhook_base_url
+            else '\u274c WEBHOOK_BASE_URL: not set (push notifications disabled)'
+        )
+
+        tokens = list(
+            CalendarToken.objects.filter(phone_number=from_number).order_by('created_at')
+        )
+
+        lines = ['\U0001f50d Calendar Status\n', webhook_status]
+
+        if not tokens:
+            lines.append('\nNo Google accounts connected.')
+        else:
+            lines.append(f'\nConnected accounts: {len(tokens)}')
+            for token in tokens:
+                email = token.account_email or '(unknown)'
+                label = token.account_label or 'primary'
+                lines.append(f'\n\U0001f4e7 {label}: {email}')
+
+                # Watch channel expiry
+                channel = (
+                    CalendarWatchChannel.objects.filter(token=token)
+                    .order_by('-created_at')
+                    .first()
+                )
+                if channel and channel.expiry:
+                    lines.append(f'  \U0001f4e1 Watch channel expires: {channel.expiry.strftime("%Y-%m-%d %H:%M UTC")}')
+                else:
+                    lines.append('  \U0001f4e1 Watch channel: \u05d0\u05d9\u05df \u05e2\u05e8\u05d5\u05e5 \u05e4\u05e2\u05d9\u05dc')
+
+                # Last sync time (most recent snapshot update)
+                last_snapshot = (
+                    token.event_snapshots.order_by('-updated_at').first()
+                )
+                if last_snapshot:
+                    lines.append(f'  \U0001f504 Last sync: {last_snapshot.updated_at.strftime("%Y-%m-%d %H:%M UTC")}')
+                else:
+                    lines.append('  \U0001f504 Last sync: never')
+
+        response = MessagingResponse()
+        response.message('\n'.join(lines))
         return HttpResponse(str(response), content_type='application/xml')
 
     def _handle_remove_calendar(self, from_number, body_lower):

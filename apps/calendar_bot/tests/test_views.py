@@ -4,7 +4,7 @@ Unit tests for apps.calendar_bot.views.
 Covers CalendarAuthStartView, CalendarAuthCallbackView, and CalendarNotificationsView.
 All Google OAuth and Twilio calls are mocked.
 """
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 from django.test import TestCase, RequestFactory, Client, override_settings
 
@@ -121,7 +121,30 @@ class CalendarAuthCallbackTests(TestCase):
 
     @patch('apps.calendar_bot.sync.register_watch_channel')
     @patch('apps.calendar_bot.views.get_oauth_flow')
-    def test_calls_register_watch_channel(self, mock_flow_factory, mock_register):
+    def test_calls_register_watch_channel_with_token_obj(self, mock_flow_factory, mock_register):
+        """register_watch_channel must be called with the CalendarToken instance, not a phone string."""
+        self._set_session(phone='+1234567890', state='valid_state')
+
+        mock_flow = MagicMock()
+        mock_flow.credentials.token = 'tok'
+        mock_flow.credentials.refresh_token = 'ref'
+        mock_flow.credentials.expiry = None
+        mock_flow_factory.return_value = mock_flow
+        mock_register.return_value = MagicMock()
+
+        self.client.get('/calendar/auth/callback/?code=auth_code&state=valid_state')
+
+        mock_register.assert_called_once()
+        arg = mock_register.call_args[0][0]
+        self.assertIsInstance(arg, CalendarToken)
+        self.assertEqual(arg.phone_number, '+1234567890')
+
+    @patch('apps.calendar_bot.sync.register_watch_channel')
+    @patch('apps.calendar_bot.views.get_oauth_flow')
+    def test_logs_success_when_watch_channel_registered(self, mock_flow_factory, mock_register):
+        """
+        TZA-105 Fix 1: callback logs at INFO level when watch channel registers successfully.
+        """
         self._set_session(phone='+1234567890', state='valid_state')
 
         mock_flow = MagicMock()
@@ -130,9 +153,65 @@ class CalendarAuthCallbackTests(TestCase):
         mock_flow.credentials.expiry = None
         mock_flow_factory.return_value = mock_flow
 
-        self.client.get('/calendar/auth/callback/?code=auth_code&state=valid_state')
+        fake_channel = MagicMock()
+        fake_channel.channel_id = 'abc-123'
+        fake_channel.expiry = None
+        mock_register.return_value = fake_channel
 
-        mock_register.assert_called_once_with('+1234567890')
+        with self.assertLogs('apps.calendar_bot.views', level='INFO') as cm:
+            self.client.get('/calendar/auth/callback/?code=auth_code&state=valid_state')
+
+        # Should log that register_watch_channel was called
+        log_text = '\n'.join(cm.output)
+        self.assertIn('register_watch_channel', log_text)
+        self.assertIn('+1234567890', log_text)
+
+    @patch('apps.calendar_bot.sync.register_watch_channel')
+    @patch('apps.calendar_bot.views.get_oauth_flow')
+    def test_logs_error_when_watch_channel_raises(self, mock_flow_factory, mock_register):
+        """
+        TZA-105 Fix 1: callback logs at ERROR level (with exc_info) when register_watch_channel raises.
+        """
+        self._set_session(phone='+1234567890', state='valid_state')
+
+        mock_flow = MagicMock()
+        mock_flow.credentials.token = 'tok'
+        mock_flow.credentials.refresh_token = 'ref'
+        mock_flow.credentials.expiry = None
+        mock_flow_factory.return_value = mock_flow
+        mock_register.side_effect = RuntimeError('Google API exploded')
+
+        with self.assertLogs('apps.calendar_bot.views', level='ERROR') as cm:
+            response = self.client.get('/calendar/auth/callback/?code=auth_code&state=valid_state')
+
+        # Response should still be 200 (error is swallowed gracefully)
+        self.assertEqual(response.status_code, 200)
+        log_text = '\n'.join(cm.output)
+        self.assertIn('register_watch_channel', log_text)
+        self.assertIn('RuntimeError', log_text)
+
+    @patch('apps.calendar_bot.sync.register_watch_channel')
+    @patch('apps.calendar_bot.views.get_oauth_flow')
+    def test_logs_warning_when_watch_channel_returns_none(self, mock_flow_factory, mock_register):
+        """
+        TZA-105 Fix 1: callback logs at WARNING when register_watch_channel returns None
+        (which happens when WEBHOOK_BASE_URL is missing).
+        """
+        self._set_session(phone='+1234567890', state='valid_state')
+
+        mock_flow = MagicMock()
+        mock_flow.credentials.token = 'tok'
+        mock_flow.credentials.refresh_token = 'ref'
+        mock_flow.credentials.expiry = None
+        mock_flow_factory.return_value = mock_flow
+        mock_register.return_value = None  # guard returned None
+
+        with self.assertLogs('apps.calendar_bot.views', level='WARNING') as cm:
+            response = self.client.get('/calendar/auth/callback/?code=auth_code&state=valid_state')
+
+        self.assertEqual(response.status_code, 200)
+        log_text = '\n'.join(cm.output)
+        self.assertIn('WEBHOOK_BASE_URL', log_text)
 
     @patch('apps.calendar_bot.sync.register_watch_channel')
     @patch('apps.calendar_bot.views.get_oauth_flow')
@@ -190,9 +269,10 @@ class CalendarNotificationsTests(TestCase):
     @patch('apps.calendar_bot.sync.send_change_alerts')
     @patch('apps.calendar_bot.calendar_service.sync_calendar_snapshot')
     def test_calls_sync_for_known_channel(self, mock_sync, mock_alerts):
-        import uuid
+        token = CalendarToken.objects.get(phone_number=self.PHONE)
         channel = CalendarWatchChannel.objects.create(
             phone_number=self.PHONE,
+            token=token,
         )
         mock_sync.return_value = []
         mock_alerts.return_value = None
@@ -204,13 +284,15 @@ class CalendarNotificationsTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        mock_sync.assert_called_once_with(self.PHONE)
+        mock_sync.assert_called_once_with(token)
 
     @patch('apps.calendar_bot.sync.send_change_alerts')
     @patch('apps.calendar_bot.calendar_service.sync_calendar_snapshot')
     def test_sends_change_alerts_after_sync(self, mock_sync, mock_alerts):
+        token = CalendarToken.objects.get(phone_number=self.PHONE)
         channel = CalendarWatchChannel.objects.create(
             phone_number=self.PHONE,
+            token=token,
         )
         changes = [{'type': 'new', 'event_id': 'e1', 'title': 'Meeting',
                     'old_start': None, 'new_start': None}]
@@ -224,3 +306,72 @@ class CalendarNotificationsTests(TestCase):
         )
 
         mock_alerts.assert_called_once_with(self.PHONE, changes)
+
+
+@override_settings(
+    GOOGLE_CLIENT_ID='fake_id',
+    GOOGLE_CLIENT_SECRET='fake_secret',
+    TWILIO_ACCOUNT_SID='ACtest',
+    TWILIO_AUTH_TOKEN='test_token',
+    TWILIO_WHATSAPP_NUMBER='whatsapp:+15005550006',
+)
+class RegisterWatchChannelGuardTests(TestCase):
+    """
+    TZA-105 Fix 3: register_watch_channel must return None and log an error
+    when WEBHOOK_BASE_URL is not configured.
+    """
+
+    def _make_token(self, phone='+1234567890'):
+        return CalendarToken.objects.create(
+            phone_number=phone,
+            access_token='tok',
+            refresh_token='ref',
+        )
+
+    @override_settings(WEBHOOK_BASE_URL='')
+    def test_returns_none_when_webhook_base_url_is_empty_string(self):
+        from apps.calendar_bot.sync import register_watch_channel
+        token = self._make_token()
+
+        with self.assertLogs('apps.calendar_bot.sync', level='ERROR') as cm:
+            result = register_watch_channel(token)
+
+        self.assertIsNone(result)
+        log_text = '\n'.join(cm.output)
+        self.assertIn('WEBHOOK_BASE_URL', log_text)
+        self.assertIn('skipping', log_text.lower())
+
+    def test_returns_none_when_webhook_base_url_not_set(self):
+        """When WEBHOOK_BASE_URL attribute is absent entirely, guard must trigger."""
+        from apps.calendar_bot.sync import register_watch_channel
+        from django.test import override_settings as _ov
+        token = self._make_token(phone='+9999999999')
+
+        # Use a settings override that removes the attribute
+        with _ov(WEBHOOK_BASE_URL=None):
+            with self.assertLogs('apps.calendar_bot.sync', level='ERROR') as cm:
+                result = register_watch_channel(token)
+
+        self.assertIsNone(result)
+        log_text = '\n'.join(cm.output)
+        self.assertIn('WEBHOOK_BASE_URL', log_text)
+
+    @patch('apps.calendar_bot.sync.get_calendar_service')
+    @override_settings(WEBHOOK_BASE_URL='https://myapp.example.com')
+    def test_proceeds_when_webhook_base_url_is_set(self, mock_get_svc):
+        """When WEBHOOK_BASE_URL is set, the guard must not block registration."""
+        from apps.calendar_bot.sync import register_watch_channel
+
+        # Mock the Google API call
+        mock_service = MagicMock()
+        mock_service.events.return_value.watch.return_value.execute.return_value = {
+            'resourceId': 'res123',
+            'expiration': '9999999999000',
+        }
+        mock_get_svc.return_value = mock_service
+
+        token = self._make_token(phone='+8888888888')
+        result = register_watch_channel(token)
+
+        self.assertIsNotNone(result)
+        mock_service.events.return_value.watch.assert_called_once()
