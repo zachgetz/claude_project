@@ -6,6 +6,7 @@ class CalendarToken(models.Model):
     access_token = models.TextField()
     refresh_token = models.TextField()
     token_expiry = models.DateTimeField(null=True, blank=True)
+    timezone = models.CharField(max_length=64, default='UTC')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

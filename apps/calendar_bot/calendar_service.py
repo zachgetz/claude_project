@@ -36,13 +36,63 @@ def get_calendar_service(phone_number):
 
 def get_user_tz(phone_number):
     """
-    Return the pytz timezone object for the user. Defaults to UTC.
+    Return the pytz timezone object for the user. Defaults to UTC if
+    no token exists or the stored timezone is invalid.
     """
     try:
         token = CalendarToken.objects.get(phone_number=phone_number)
         return pytz.timezone(token.timezone)
-    except (CalendarToken.DoesNotExist, Exception):
+    except CalendarToken.DoesNotExist:
         return pytz.UTC
+    except Exception:
+        return pytz.UTC
+
+
+def get_events_for_date(phone_number, target_date):
+    """
+    Fetch all-day and timed events from Google Calendar for a specific
+    date (datetime.date) in the user's local timezone.
+    Returns a list of event dicts with 'start', 'summary' keys.
+    """
+    user_tz = get_user_tz(phone_number)
+    service = get_calendar_service(phone_number)
+
+    # Build timezone-aware start/end for the day
+    day_start = user_tz.localize(datetime.datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0))
+    day_end = user_tz.localize(datetime.datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59))
+
+    events_result = service.events().list(
+        calendarId='primary',
+        timeMin=day_start.isoformat(),
+        timeMax=day_end.isoformat(),
+        singleEvents=True,
+        orderBy='startTime',
+    ).execute()
+
+    events = []
+    for item in events_result.get('items', []):
+        start_raw = item.get('start', {})
+        # timed event
+        if 'dateTime' in start_raw:
+            start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
+            if start_dt.tzinfo is None:
+                start_dt = pytz.UTC.localize(start_dt)
+            start_local = start_dt.astimezone(user_tz)
+            events.append({
+                'start': start_local,
+                'start_str': start_local.strftime('%H:%M'),
+                'summary': item.get('summary', '(No title)'),
+                'raw': item,
+            })
+        else:
+            # all-day event
+            events.append({
+                'start': None,
+                'start_str': 'All day',
+                'summary': item.get('summary', '(No title)'),
+                'raw': item,
+            })
+    return events
 
 
 def _is_expired(token_expiry):
