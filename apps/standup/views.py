@@ -156,52 +156,13 @@ class WhatsAppWebhookView(APIView):
             logger.warning('Received empty body from phone=%s', from_number)
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
-        # --- Fallthrough: unrecognized message ---
-        current_week = datetime.datetime.now().isocalendar()[1]
-
+        # --- Fallthrough: unrecognized message → menu or onboarding ---
         logger.info(
-            'Recording standup entry: phone=%s week=%d body=%.50r',
+            'Unrecognized message, routing to onboarding/menu: phone=%s body=%.50r',
             from_number,
-            current_week,
             body,
         )
-
-        try:
-            entry = StandupEntry.objects.create(
-                phone_number=from_number,
-                message=body,
-                week_number=current_week,
-            )
-        except Exception:
-            logger.exception(
-                'Failed to create StandupEntry: phone=%s week=%d',
-                from_number,
-                current_week,
-            )
-            raise
-
-        entry_count = StandupEntry.objects.filter(
-            phone_number=from_number,
-            week_number=current_week,
-        ).count()
-
-        logger.info(
-            'StandupEntry created: id=%s phone=%s week=%d entry_count=%d',
-            entry.pk,
-            from_number,
-            current_week,
-            entry_count,
-        )
-
-        reply_text = (
-            f"Got it \u2713 Logged for today (entry #{entry_count} this week). "
-            "Type /summary for your weekly digest."
-        )
-
-        response = MessagingResponse()
-        response.message(reply_text)
-
-        return HttpResponse(str(response), content_type='application/xml')
+        return self._maybe_onboarding(request, from_number)
 
     # ------------------------------------------------------------------ #
     # Multi-account calendar commands
@@ -366,8 +327,8 @@ class WhatsAppWebhookView(APIView):
 
     def _maybe_onboarding(self, request, from_number):
         """
-        If the user has NO CalendarToken, send onboarding message.
-        For connected users, send help message.
+        If the user has NO CalendarToken, send onboarding message with connect link.
+        If the user IS connected, show the numbered menu.
         """
         from apps.calendar_bot.models import CalendarToken
 
@@ -378,9 +339,13 @@ class WhatsAppWebhookView(APIView):
 
         if not has_calendar:
             logger.info('Sending onboarding message to unconfigured user: phone=%s', from_number)
-            auth_url = request.build_absolute_uri(
-                f'/calendar/auth/start/?phone={from_number}'
-            )
+            webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', '')
+            if webhook_base_url:
+                auth_url = webhook_base_url.rstrip('/') + f'/calendar/auth/start/?phone={from_number}'
+            else:
+                auth_url = request.build_absolute_uri(
+                    f'/calendar/auth/start/?phone={from_number}'
+                )
             onboarding_text = (
                 "Hi! I'm your WhatsApp calendar assistant.\n"
                 "\n"
@@ -394,10 +359,9 @@ class WhatsAppWebhookView(APIView):
             response.message(onboarding_text)
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Connected user with unrecognized message -> help
-        response = MessagingResponse()
-        response.message(HELP_TEXT)
-        return HttpResponse(str(response), content_type='application/xml')
+        # Connected user with unrecognized message → show menu
+        logger.info('Connected user sent unrecognized message, showing menu: phone=%s', from_number)
+        return self._handle_menu()
 
     # ------------------------------------------------------------------ #
     # Instant queries
