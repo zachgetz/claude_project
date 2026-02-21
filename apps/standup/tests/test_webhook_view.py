@@ -1,8 +1,15 @@
 """
-Unit tests for apps.standup.views.WhatsAppWebhookView.
+TZA-117: Updated unit tests for apps.standup.views.WhatsAppWebhookView.
 
-The TwilioSignaturePermission is patched out for all tests so that
-we can focus on view logic without needing a real Twilio signature.
+After TZA-110, the bot is fully menu-driven and Hebrew-only:
+- Free text from new (unconnected) users triggers onboarding, not standup entry.
+- Free text from connected users at root shows the Hebrew main menu.
+- StandupEntry records are no longer created from free-text messages.
+- The legacy /summary command still works (returns Hebrew digest).
+- The TwilioSignaturePermission is enforced (returns 403 without mock).
+
+The TwilioSignaturePermission is patched out for all tests so that we
+can focus on view logic without needing a real Twilio signature.
 """
 import datetime
 from unittest.mock import patch, MagicMock
@@ -12,6 +19,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.standup.models import StandupEntry
+from apps.calendar_bot.models import CalendarToken, UserMenuState
 
 
 PATCH_PERMISSION = patch(
@@ -24,6 +32,7 @@ PATCH_PERMISSION = patch(
     TWILIO_ACCOUNT_SID='ACtest',
     TWILIO_AUTH_TOKEN='test_token',
     TWILIO_WHATSAPP_NUMBER='whatsapp:+15005550006',
+    WEBHOOK_BASE_URL='https://example.com',
 )
 class WhatsAppWebhookViewTests(TestCase):
     """Tests for POST /standup/webhook/."""
@@ -47,26 +56,57 @@ class WhatsAppWebhookViewTests(TestCase):
             )
 
     # ------------------------------------------------------------------
-    # Tests
+    # Unconnected users: onboarding flow
     # ------------------------------------------------------------------
-    def test_valid_standup_creates_entry(self):
-        """A non-empty Body creates a StandupEntry and returns 200 XML."""
-        response = self._post('Working on TZA-18 today.')
 
+    def test_new_user_gets_onboarding_greeting(self):
+        """A user with no CalendarToken gets the Hebrew onboarding greeting."""
+        response = self._post('Hello!')
         self.assertEqual(response.status_code, 200)
         self.assertIn('application/xml', response['Content-Type'])
-        self.assertEqual(StandupEntry.objects.count(), 1)
-
-        entry = StandupEntry.objects.first()
-        self.assertEqual(entry.phone_number, self.phone)
-        self.assertEqual(entry.message, 'Working on TZA-18 today.')
-
-    def test_response_contains_confirmation_text(self):
-        """Reply TwiML should contain the confirmation message."""
-        response = self._post('Done with review.')
         content = response.content.decode()
-        self.assertIn('Got it', content)
-        self.assertIn('/summary', content)
+        # Hebrew onboarding: '\u05d4\u05d9\u05d9' = 'היי'
+        self.assertIn('\u05d4\u05d9\u05d9', content)
+        # Asks for name: '\u05de\u05d4 \u05e9\u05de\u05da' = 'מה שמך'
+        self.assertIn('\u05de\u05d4 \u05e9\u05de\u05da', content)
+
+    def test_new_user_does_not_create_standup_entry(self):
+        """No StandupEntry is created during onboarding."""
+        self._post('Working on TZA-18 today.')
+        self.assertEqual(StandupEntry.objects.count(), 0)
+
+    # ------------------------------------------------------------------
+    # Connected users: main menu at root
+    # ------------------------------------------------------------------
+
+    def test_connected_user_sees_hebrew_main_menu(self):
+        """A connected user sending any text at root sees the Hebrew main menu."""
+        CalendarToken.objects.create(
+            phone_number=self.phone,
+            account_email='test@example.com',
+            access_token='fake_access',
+            refresh_token='fake_refresh',
+        )
+        response = self._post('Done with review.')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Hebrew main menu header: 'תפריט'
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8', content)
+
+    def test_connected_user_does_not_create_standup_entry(self):
+        """Free text from a connected user must NOT create a StandupEntry."""
+        CalendarToken.objects.create(
+            phone_number=self.phone,
+            account_email='test@example.com',
+            access_token='fake_access',
+            refresh_token='fake_refresh',
+        )
+        self._post('Working on TZA-18 today.')
+        self.assertEqual(StandupEntry.objects.count(), 0)
+
+    # ------------------------------------------------------------------
+    # Empty body
+    # ------------------------------------------------------------------
 
     def test_empty_body_returns_400(self):
         """An empty Body should return HTTP 400 without creating any entry."""
@@ -80,16 +120,9 @@ class WhatsAppWebhookViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(StandupEntry.objects.count(), 0)
 
-    def test_entry_count_increments_per_week(self):
-        """Multiple entries from the same number increment the count correctly."""
-        self._post('First entry.')
-        self._post('Second entry.')
-        response = self._post('Third entry.')
-
-        self.assertEqual(StandupEntry.objects.count(), 3)
-        content = response.content.decode()
-        # The reply should mention entry #3
-        self.assertIn('entry #3', content)
+    # ------------------------------------------------------------------
+    # /summary command (legacy — still functional)
+    # ------------------------------------------------------------------
 
     def test_summary_command_returns_digest(self):
         """/summary returns a weekly digest containing submitted messages."""
@@ -106,13 +139,14 @@ class WhatsAppWebhookViewTests(TestCase):
         content = response.content.decode()
         self.assertIn('Fixed the login bug.', content)
 
-    def test_summary_command_no_entries(self):
-        """/summary with no entries this week returns a friendly message."""
+    def test_summary_command_no_entries_returns_hebrew_message(self):
+        """/summary with no entries this week returns a Hebrew 'no entries' message."""
         response = self._post('/summary')
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('No entries yet this week', content)
+        # Hebrew 'no entries': '\u05d0\u05d9\u05df \u05e8\u05e9\u05d5\u05de\u05d5\u05ea'
+        self.assertIn('\u05d0\u05d9\u05df \u05e8\u05e9\u05d5\u05de\u05d5\u05ea', content)
 
     def test_summary_only_shows_current_week(self):
         """/summary only shows entries from the current ISO week."""
@@ -136,7 +170,7 @@ class WhatsAppWebhookViewTests(TestCase):
         self.assertIn('This week message.', content)
         self.assertNotIn('Last week message.', content)
 
-    def test_multiple_users_isolated(self):
+    def test_multiple_users_summary_isolated(self):
         """Entries from different phone numbers don't appear in each other's summary."""
         other_phone = 'whatsapp:+9876543210'
         current_week = datetime.datetime.now().isocalendar()[1]
@@ -157,6 +191,10 @@ class WhatsAppWebhookViewTests(TestCase):
 
         self.assertIn('My standup.', content)
         self.assertNotIn('Other person standup.', content)
+
+    # ------------------------------------------------------------------
+    # Twilio signature enforcement
+    # ------------------------------------------------------------------
 
     def test_twilio_signature_rejected_without_mock(self):
         """
