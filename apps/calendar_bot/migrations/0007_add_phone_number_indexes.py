@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AlterField(
-            model_name='calendarevent_snapshot',
+            model_name='calendareventsnapshot',
             name='phone_number',
             field=models.CharField(db_index=True, max_length=30),
         ),
