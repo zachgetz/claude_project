@@ -116,11 +116,40 @@ class CalendarAuthCallbackView(View):
         )
 
         # Register Google Calendar push notification watch channel
+        logger.info(
+            'calendar_auth_callback: calling register_watch_channel for phone=%s email=%s',
+            phone,
+            email,
+        )
         try:
             from .sync import register_watch_channel
-            register_watch_channel(token_obj)
+            watch_channel = register_watch_channel(token_obj)
+            if watch_channel is not None:
+                logger.info(
+                    'calendar_auth_callback: register_watch_channel succeeded for phone=%s '
+                    'email=%s channel_id=%s expiry=%s',
+                    phone,
+                    email,
+                    watch_channel.channel_id,
+                    watch_channel.expiry,
+                )
+            else:
+                logger.warning(
+                    'calendar_auth_callback: register_watch_channel returned None for '
+                    'phone=%s email=%s (WEBHOOK_BASE_URL may be missing)',
+                    phone,
+                    email,
+                )
         except Exception as exc:
-            logger.warning('Could not register watch channel for %s: %s', phone, exc)
+            logger.error(
+                'calendar_auth_callback: register_watch_channel raised an exception for '
+                'phone=%s email=%s — %s: %s',
+                phone,
+                email,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
 
         # Prime the snapshot table
         try:
