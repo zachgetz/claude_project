@@ -3,6 +3,7 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "gunicorn standup_bot.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --log-file -"
+releaseCommand = "python manage.py migrate --noinput"
 healthcheckPath = "/health/"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
