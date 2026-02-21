@@ -171,7 +171,7 @@ class CalendarAuthCallbackView(View):
             client.messages.create(
                 from_=f'whatsapp:{django_settings.TWILIO_WHATSAPP_NUMBER}',
                 to=f'whatsapp:{phone}',
-                body='\u2705 גוגל קלנדר מחובר! שלח *0* לתפריט.',
+                body='\u2705 \u05d2\u05d5\u05d2\u05dc \u05e7\u05dc\u05e0\u05d3\u05e8 \u05de\u05d7\u05d5\u05d1\u05e8! \u05e9\u05dc\u05d7 *0* \u05dc\u05ea\u05e4\u05e8\u09f9.',
             )
             logger.info('Sent WhatsApp confirmation after OAuth for phone=%s', phone)
         except Exception as exc:
@@ -199,6 +199,8 @@ class CalendarNotificationsView(View):
         if not channel_id_header:
             return HttpResponse('Missing X-Goog-Channel-ID', status=400)
 
+        logger.info('[CalendarNotif] Google push received — channel_id: %s', channel_id_header)
+
         try:
             watch_channel = CalendarWatchChannel.objects.select_related('token').get(
                 channel_id=channel_id_header
@@ -208,6 +210,8 @@ class CalendarNotificationsView(View):
             return HttpResponse('Unknown channel', status=404)
 
         phone_number = watch_channel.phone_number
+
+        logger.info('[CalendarNotif] Resolved phone: %s', phone_number)
 
         # Use the watch channel's token for scoped sync; fallback if token is NULL
         token = watch_channel.token
@@ -233,6 +237,11 @@ class CalendarNotificationsView(View):
         except Exception as exc:
             logger.exception('Error syncing calendar snapshot for %s: %s', phone_number, exc)
             return HttpResponse('OK', status=200)
+
+        logger.info('[CalendarNotif] sync returned %d change(s) for %s', len(changes), phone_number)
+
+        if not changes:
+            logger.info('[CalendarNotif] No changes — skipping alerts')
 
         # Send change alerts
         try:

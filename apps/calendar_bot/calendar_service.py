@@ -475,6 +475,8 @@ def sync_calendar_snapshot(token, send_alerts=True):
     now = datetime.datetime.now(tz=pytz.UTC)
     debounce_cutoff = now - datetime.timedelta(minutes=5)
 
+    logger.info('[Sync] Starting snapshot sync for %s', phone_number)
+
     try:
         service = get_calendar_service(token)
     except Exception:
@@ -507,6 +509,7 @@ def sync_calendar_snapshot(token, send_alerts=True):
 
     # Build a dict of current events from Google {event_id -> event_item}
     current_events = {}
+    all_day_skipped = 0
     for item in events_result.get('items', []):
         event_id = item.get('id')
         if not event_id:
@@ -515,6 +518,7 @@ def sync_calendar_snapshot(token, send_alerts=True):
         end_raw = item.get('end', {})
         if 'dateTime' not in start_raw or 'dateTime' not in end_raw:
             # Skip all-day events for snapshot tracking
+            all_day_skipped += 1
             continue
         start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
         end_dt = datetime.datetime.fromisoformat(end_raw['dateTime'])
@@ -529,6 +533,15 @@ def sync_calendar_snapshot(token, send_alerts=True):
             'end_time': end_dt.astimezone(pytz.UTC),
         }
 
+    total_items = len(events_result.get('items', []))
+    timed_count = len(current_events)
+    logger.info(
+        '[Sync] Google returned %d events (%d timed, %d all-day skipped)',
+        total_items,
+        timed_count,
+        all_day_skipped,
+    )
+
     # Load existing snapshots scoped to this specific token and time window.
     existing_snapshots = {
         snap.event_id: snap
@@ -541,6 +554,9 @@ def sync_calendar_snapshot(token, send_alerts=True):
     }
 
     changes = []
+    new_ct = 0
+    reschedule_ct = 0
+    cancel_ct = 0
 
     # Detect new events and rescheduled events
     for event_id, current in current_events.items():
@@ -558,6 +574,7 @@ def sync_calendar_snapshot(token, send_alerts=True):
                 status='active',
             )
             if send_alerts:
+                new_ct += 1
                 changes.append({
                     'type': 'new',
                     'event_id': event_id,
@@ -573,6 +590,7 @@ def sync_calendar_snapshot(token, send_alerts=True):
             snap.status = 'active'
             snap.save()
             if send_alerts:
+                new_ct += 1
                 changes.append({
                     'type': 'new',
                     'event_id': event_id,
@@ -585,6 +603,10 @@ def sync_calendar_snapshot(token, send_alerts=True):
             if snap.start_time != current['start_time']:
                 # Debounce: skip if updated < 5 min ago
                 if snap.updated_at > debounce_cutoff:
+                    logger.info(
+                        "[Sync] Debounce: skipping change for event '%s' (within 5-min window)",
+                        event_id,
+                    )
                     continue
                 old_start = snap.start_time
                 snap.title = current['title']
@@ -592,6 +614,7 @@ def sync_calendar_snapshot(token, send_alerts=True):
                 snap.end_time = current['end_time']
                 snap.save()
                 if send_alerts:
+                    reschedule_ct += 1
                     changes.append({
                         'type': 'rescheduled',
                         'event_id': event_id,
@@ -605,10 +628,15 @@ def sync_calendar_snapshot(token, send_alerts=True):
         if event_id not in current_events and snap.status == 'active':
             # Debounce: skip if updated < 5 min ago
             if snap.updated_at > debounce_cutoff:
+                logger.info(
+                    "[Sync] Debounce: skipping change for event '%s' (within 5-min window)",
+                    event_id,
+                )
                 continue
             snap.status = 'cancelled'
             snap.save()
             if send_alerts:
+                cancel_ct += 1
                 changes.append({
                     'type': 'cancelled',
                     'event_id': event_id,
@@ -616,6 +644,13 @@ def sync_calendar_snapshot(token, send_alerts=True):
                     'old_start': snap.start_time,
                     'new_start': None,
                 })
+
+    logger.info(
+        '[Sync] Detected: %d new, %d rescheduled, %d cancelled',
+        new_ct,
+        reschedule_ct,
+        cancel_ct,
+    )
 
     return changes
 
