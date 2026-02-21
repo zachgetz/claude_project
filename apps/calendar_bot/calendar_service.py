@@ -1,4 +1,5 @@
 import datetime
+import re
 import pytz
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -106,7 +107,6 @@ def sync_calendar_snapshot(phone_number):
     debounce_cutoff = now - datetime.timedelta(minutes=5)
 
     service = get_calendar_service(phone_number)
-    user_tz = get_user_tz(phone_number)
 
     # Fetch events for next 7 days
     time_min = now
@@ -223,6 +223,284 @@ def sync_calendar_snapshot(phone_number):
             })
 
     return changes
+
+
+def handle_block_command(phone_number, body):
+    """
+    Parse natural language block command.
+    Check conflicts with existing events.
+    If conflict: return warning message asking YES to confirm.
+    Store pending confirmation in database.
+    If no conflict or confirmed: create event via Google Calendar API.
+    Return confirmation message.
+    """
+    from .models import PendingBlockConfirmation
+
+    # Parse the command
+    parsed = _parse_block_command(body)
+    if parsed is None:
+        return (
+            'Could not parse your block command.\n'
+            'Try: "block tomorrow 2-4pm" or "block friday 10am-12pm deep work"'
+        )
+
+    target_date, start_hour, start_min, end_hour, end_min, title = parsed
+    user_tz = get_user_tz(phone_number)
+    now_local = datetime.datetime.now(tz=user_tz)
+    today = now_local.date()
+
+    # Enforce: only within next 7 days
+    delta = (target_date - today).days
+    if delta < 0 or delta > 7:
+        return 'You can only block time within the next 7 days.'
+
+    # Build timezone-aware start/end datetimes
+    start_dt_local = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day, start_hour, start_min)
+    )
+    end_dt_local = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day, end_hour, end_min)
+    )
+
+    if end_dt_local <= start_dt_local:
+        return 'End time must be after start time.'
+
+    # Check for conflicts
+    try:
+        service = get_calendar_service(phone_number)
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=start_dt_local.isoformat(),
+            timeMax=end_dt_local.isoformat(),
+            singleEvents=True,
+            orderBy='startTime',
+        ).execute()
+        conflicts = [
+            item for item in events_result.get('items', [])
+            if 'dateTime' in item.get('start', {})
+        ]
+    except Exception as exc:
+        return f'Could not check calendar: {exc}'
+
+    event_data = {
+        'date': target_date.isoformat(),
+        'start': start_dt_local.isoformat(),
+        'end': end_dt_local.isoformat(),
+        'title': title,
+    }
+
+    if conflicts:
+        # Store pending confirmation
+        PendingBlockConfirmation.objects.update_or_create(
+            phone_number=phone_number,
+            defaults={'event_data': event_data},
+        )
+        conflict_names = ', '.join(
+            f'"{c.get("summary", "(No title)")}"' for c in conflicts[:3]
+        )
+        time_range = f'{start_hour:02d}:{start_min:02d}-{end_hour:02d}:{end_min:02d}'
+        return (
+            f'\u26a0\ufe0f Conflict detected: {conflict_names} overlaps with '
+            f'{time_range} on {target_date.strftime("%A, %b %d")}.\n'
+            f'Reply YES to create "{title}" anyway.'
+        )
+
+    # No conflict — create the event directly
+    return _create_calendar_block(phone_number, service, start_dt_local, end_dt_local, title, user_tz)
+
+
+def confirm_block_command(phone_number):
+    """
+    Called when user replies YES to a pending block confirmation.
+    Creates the event and deletes the pending record.
+    Returns confirmation message.
+    """
+    from .models import PendingBlockConfirmation
+
+    try:
+        pending = PendingBlockConfirmation.objects.get(phone_number=phone_number)
+    except PendingBlockConfirmation.DoesNotExist:
+        return 'No pending block to confirm.'
+
+    event_data = pending.event_data
+    pending.delete()
+
+    user_tz = get_user_tz(phone_number)
+    start_dt_local = datetime.datetime.fromisoformat(event_data['start'])
+    end_dt_local = datetime.datetime.fromisoformat(event_data['end'])
+    title = event_data['title']
+
+    # Ensure timezone-aware
+    if start_dt_local.tzinfo is None:
+        start_dt_local = user_tz.localize(start_dt_local)
+    if end_dt_local.tzinfo is None:
+        end_dt_local = user_tz.localize(end_dt_local)
+
+    try:
+        service = get_calendar_service(phone_number)
+    except Exception as exc:
+        return f'Could not connect to calendar: {exc}'
+
+    return _create_calendar_block(phone_number, service, start_dt_local, end_dt_local, title, user_tz)
+
+
+def _create_calendar_block(phone_number, service, start_dt_local, end_dt_local, title, user_tz):
+    """
+    Creates a personal (no attendees) event in Google Calendar.
+    Returns a confirmation message string.
+    """
+    title = title[:60]  # enforce max 60 chars
+    event_body = {
+        'summary': title,
+        'start': {'dateTime': start_dt_local.isoformat(), 'timeZone': str(user_tz)},
+        'end': {'dateTime': end_dt_local.isoformat(), 'timeZone': str(user_tz)},
+    }
+    try:
+        created = service.events().insert(calendarId='primary', body=event_body).execute()
+    except Exception as exc:
+        return f'Failed to create event: {exc}'
+
+    time_str = f'{start_dt_local.strftime("%H:%M")}-{end_dt_local.strftime("%H:%M")}'
+    date_str = start_dt_local.strftime('%A, %b %d')
+    return f'\u2705 Blocked: "{title}" on {date_str} {time_str}'
+
+
+def _parse_block_command(body):
+    """
+    Parses commands like:
+      block tomorrow 2-4pm
+      block friday 10am-12pm deep work
+      block today 3pm-4pm
+      add meeting tomorrow 9am-10am Client call
+    Returns (date, start_hour, start_min, end_hour, end_min, title) or None.
+    """
+    body_stripped = body.strip()
+    # Strip prefix
+    lower = body_stripped.lower()
+    if lower.startswith('add meeting '):
+        rest = body_stripped[len('add meeting '):].strip()
+    elif lower.startswith('block '):
+        rest = body_stripped[len('block '):].strip()
+    else:
+        return None
+
+    # Split into tokens: first is date, second is time range, remainder is title
+    tokens = rest.split()
+    if len(tokens) < 2:
+        return None
+
+    date_token = tokens[0].lower()
+    time_token = tokens[1]
+    title_tokens = tokens[2:]
+    title = ' '.join(title_tokens) if title_tokens else 'Blocked'
+
+    # Resolve date
+    today = datetime.date.today()
+    target_date = _resolve_date(date_token, today)
+    if target_date is None:
+        return None
+
+    # Parse time range: patterns like "2-4pm", "10am-12pm", "2:30pm-4pm"
+    times = _parse_time_range(time_token)
+    if times is None:
+        return None
+
+    start_hour, start_min, end_hour, end_min = times
+    return target_date, start_hour, start_min, end_hour, end_min, title
+
+
+def _resolve_date(date_token, today):
+    """Resolve date token (today, tomorrow, monday..sunday, next monday..sunday) to a date."""
+    if date_token == 'today':
+        return today
+    if date_token == 'tomorrow':
+        return today + datetime.timedelta(days=1)
+
+    day_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+
+    # "next monday" pattern
+    if date_token.startswith('next '):
+        day_name = date_token[5:]
+        if day_name in day_names:
+            target_weekday = day_names.index(day_name)
+            days_ahead = (target_weekday - today.weekday() + 7) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            return today + datetime.timedelta(days=days_ahead)
+        return None
+
+    # Just day name
+    if date_token in day_names:
+        target_weekday = day_names.index(date_token)
+        days_ahead = (target_weekday - today.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        return today + datetime.timedelta(days=days_ahead)
+
+    return None
+
+
+def _parse_time_range(time_str):
+    """
+    Parse time range strings like: "2-4pm", "10am-12pm", "2:30pm-4pm", "14:00-16:00".
+    Returns (start_hour, start_min, end_hour, end_min) in 24-hour format, or None.
+    """
+    time_str = time_str.lower().strip()
+
+    # Split on '-' that separates two time parts
+    pattern = r'^(\d{1,2}(?::\d{2})?(?:am|pm)?)-((\d{1,2})(?::\d{2})?(?:am|pm)?)$'
+    m = re.match(pattern, time_str, re.IGNORECASE)
+    if not m:
+        return None
+
+    start_str = m.group(1)
+    end_str = m.group(2)
+
+    start = _parse_single_time(start_str)
+    end = _parse_single_time(end_str)
+
+    if start is None or end is None:
+        return None
+
+    start_hour, start_min, start_ampm = start
+    end_hour, end_min, end_ampm = end
+
+    # If end has am/pm but start does not, inherit end's am/pm for start
+    if start_ampm is None and end_ampm is not None:
+        if end_ampm == 'pm' and start_hour < 12:
+            start_hour += 12
+        elif end_ampm == 'am' and start_hour == 12:
+            start_hour = 0
+    elif start_ampm == 'pm' and start_hour != 12:
+        start_hour += 12
+    elif start_ampm == 'am' and start_hour == 12:
+        start_hour = 0
+
+    if end_ampm == 'pm' and end_hour != 12:
+        end_hour += 12
+    elif end_ampm == 'am' and end_hour == 12:
+        end_hour = 0
+
+    if not (0 <= start_hour <= 23 and 0 <= start_min <= 59):
+        return None
+    if not (0 <= end_hour <= 23 and 0 <= end_min <= 59):
+        return None
+
+    return start_hour, start_min, end_hour, end_min
+
+
+def _parse_single_time(time_str):
+    """
+    Parse a single time like "2", "2:30", "2pm", "2:30pm".
+    Returns (hour, minute, ampm_str_or_None).
+    """
+    m = re.match(r'^(\d{1,2})(?::(\d{2}))?(am|pm)?$', time_str.lower())
+    if not m:
+        return None
+    hour = int(m.group(1))
+    minute = int(m.group(2)) if m.group(2) else 0
+    ampm = m.group(3)
+    return hour, minute, ampm
 
 
 def _is_expired(token_expiry):

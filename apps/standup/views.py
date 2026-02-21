@@ -64,6 +64,16 @@ class WhatsAppWebhookView(APIView):
         if body_lower.startswith('set digest'):
             return self._handle_set_digest(from_number, body_lower)
 
+        # Handle block time command
+        if body_lower.startswith('block ') or body_lower.startswith('add meeting '):
+            return self._handle_block_command(from_number, body)
+
+        # Handle YES confirmation for pending block
+        if body.strip().upper() == 'YES':
+            yes_result = self._handle_yes_confirmation(from_number)
+            if yes_result is not None:
+                return yes_result
+
         # Handle instant queries: next meeting
         if body_lower in NEXT_MEETING_TRIGGERS:
             result = self._try_next_meeting(from_number)
@@ -111,6 +121,45 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         response.message(reply_text)
 
+        return HttpResponse(str(response), content_type='application/xml')
+
+    # ------------------------------------------------------------------ #
+    # Block time command handling
+    # ------------------------------------------------------------------ #
+
+    def _handle_block_command(self, from_number, body):
+        from apps.calendar_bot.calendar_service import handle_block_command
+        from apps.calendar_bot.models import CalendarToken
+
+        try:
+            token = CalendarToken.objects.get(phone_number=from_number)
+            if not token.access_token:
+                raise CalendarToken.DoesNotExist
+        except CalendarToken.DoesNotExist:
+            response = MessagingResponse()
+            response.message(
+                'Please connect your Google Calendar first. '
+                'Ask for the calendar link to get started.'
+            )
+            return HttpResponse(str(response), content_type='application/xml')
+
+        reply_text = handle_block_command(from_number, body)
+        response = MessagingResponse()
+        response.message(reply_text)
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_yes_confirmation(self, from_number):
+        from apps.calendar_bot.models import PendingBlockConfirmation
+        from apps.calendar_bot.calendar_service import confirm_block_command
+
+        try:
+            PendingBlockConfirmation.objects.get(phone_number=from_number)
+        except PendingBlockConfirmation.DoesNotExist:
+            return None  # Not a YES for pending block, fall through
+
+        reply_text = confirm_block_command(from_number)
+        response = MessagingResponse()
+        response.message(reply_text)
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
