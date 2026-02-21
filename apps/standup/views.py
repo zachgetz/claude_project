@@ -1,8 +1,6 @@
 import datetime
 import re
-from django.shortcuts import render
 from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.http import HttpResponse
 from twilio.twiml.messaging_response import MessagingResponse
@@ -30,6 +28,11 @@ class WhatsAppWebhookView(APIView):
         if body_lower.startswith('set digest'):
             return self._handle_set_digest(from_number, body_lower)
 
+        # Handle day queries
+        day_result = self._try_day_query(from_number, body_lower)
+        if day_result is not None:
+            return day_result
+
         if not body.strip():
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
@@ -56,6 +59,63 @@ class WhatsAppWebhookView(APIView):
 
         return HttpResponse(str(response), content_type='application/xml')
 
+    # ------------------------------------------------------------------ #
+    # Day query handling
+    # ------------------------------------------------------------------ #
+
+    def _try_day_query(self, from_number, body_lower):
+        """Returns an HttpResponse if the message is a calendar day query, else None."""
+        from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
+        from apps.calendar_bot.query_helpers import resolve_day, format_events_for_day, format_week_view
+        from apps.calendar_bot.models import CalendarToken
+
+        # Check if user has a CalendarToken with OAuth credentials
+        try:
+            token = CalendarToken.objects.get(phone_number=from_number)
+            if not token.access_token:  # placeholder token (timezone-only)
+                return None
+        except CalendarToken.DoesNotExist:
+            return None
+
+        user_tz = get_user_tz(from_number)
+        today = datetime.datetime.now(tz=user_tz).date()
+
+        target, label = resolve_day(body_lower, today)
+
+        if target is None:
+            return None
+
+        response = MessagingResponse()
+
+        if target == 'week':
+            # Monday to Sunday of current week
+            week_start = today - datetime.timedelta(days=today.weekday())
+            week_end = week_start + datetime.timedelta(days=6)
+            week_events = {}
+            current = week_start
+            while current <= week_end:
+                try:
+                    evs = get_events_for_date(from_number, current)
+                except Exception:
+                    evs = []
+                week_events[current] = evs
+                current += datetime.timedelta(days=1)
+            msg = format_week_view(week_events, week_start, week_end)
+        else:
+            try:
+                events = get_events_for_date(from_number, target)
+            except Exception as e:
+                response.message(f'Could not fetch calendar: {e}')
+                return HttpResponse(str(response), content_type='application/xml')
+            msg = format_events_for_day(events, label)
+
+        response.message(msg)
+        return HttpResponse(str(response), content_type='application/xml')
+
+    # ------------------------------------------------------------------ #
+    # Settings commands
+    # ------------------------------------------------------------------ #
+
     def _handle_set_digest(self, from_number, body_lower):
         from apps.calendar_bot.models import CalendarToken
 
@@ -64,8 +124,6 @@ class WhatsAppWebhookView(APIView):
             defaults={'access_token': '', 'refresh_token': ''},
         )
 
-        # Parse: 'set digest off', 'set digest on', 'set digest always'
-        # 'set digest 7:30am', 'set digest 9am'
         arg = body_lower[len('set digest'):].strip()
 
         if arg == 'off':
@@ -89,7 +147,6 @@ class WhatsAppWebhookView(APIView):
             response.message('Morning digest will be sent even on days with no meetings.')
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Try to parse time like '7:30am', '9am', '14:00'
         parsed = _parse_digest_time(arg)
         if parsed is not None:
             hour, minute = parsed
@@ -126,10 +183,7 @@ class WhatsAppWebhookView(APIView):
 
         token, _ = CalendarToken.objects.get_or_create(
             phone_number=from_number,
-            defaults={
-                'access_token': '',
-                'refresh_token': '',
-            },
+            defaults={'access_token': '', 'refresh_token': ''},
         )
         token.timezone = tz_name
         token.save(update_fields=['timezone', 'updated_at'])
@@ -166,10 +220,7 @@ def _parse_digest_time(arg):
     Parse time strings like '7:30am', '9am', '14:00', '9:00pm'.
     Returns (hour, minute) in 24-hour format, or None if unparseable.
     """
-    # Normalize
     arg = arg.strip().lower().replace(' ', '')
-
-    # Match h:mam/pm or hampm
     m = re.match(r'^(\d{1,2})(?::(\d{2}))?(am|pm)?$', arg)
     if not m:
         return None
