@@ -9,10 +9,35 @@ from apps.standup.models import StandupEntry
 
 NEXT_MEETING_TRIGGERS = {'next meeting', 'next', "what's next", 'whats next'}
 FREE_TODAY_TRIGGERS = {'free today', 'am i free', 'free time', 'when am i free'}
+HELP_TRIGGERS = {'help', '?', '/help'}
 
 WORKDAY_START_HOUR = 8
 WORKDAY_END_HOUR = 19
 MIN_FREE_SLOT_MINUTES = 30
+
+HELP_TEXT = (
+    "\U0001f4c5 Your calendar assistant:\n"
+    "\n"
+    "Queries:\n"
+    '\u2022 "today" / "meetings" \u2014 today\'s schedule\n'
+    '\u2022 "tomorrow" \u2014 tomorrow\'s meetings\n'
+    '\u2022 "friday" / "meetings thursday" \u2014 any day this week\n'
+    '\u2022 "next monday" \u2014 following week\n'
+    '\u2022 "this week" \u2014 full week view\n'
+    '\u2022 "next meeting" \u2014 your next upcoming event\n'
+    '\u2022 "free today" \u2014 free slots today\n'
+    "\n"
+    "Create:\n"
+    '\u2022 "block tomorrow 2-4pm" \u2014 block time\n'
+    '\u2022 "block friday 10am Deep work" \u2014 named block\n'
+    "\n"
+    "Settings:\n"
+    '\u2022 "set digest 7:30am" \u2014 change briefing time\n'
+    '\u2022 "set digest off" \u2014 turn off morning digest\n'
+    '\u2022 "set timezone Europe/London" \u2014 set your timezone\n'
+    "\n"
+    "I'll also alert you when meetings are rescheduled or cancelled."
+)
 
 
 class WhatsAppWebhookView(APIView):
@@ -26,6 +51,10 @@ class WhatsAppWebhookView(APIView):
         # Handle /summary command BEFORE any saving
         if body_lower == '/summary':
             return self._handle_summary(from_number)
+
+        # Handle help command
+        if body_lower in HELP_TRIGGERS:
+            return self._handle_help()
 
         # Handle set timezone command
         if body_lower.startswith('set timezone '):
@@ -55,6 +84,12 @@ class WhatsAppWebhookView(APIView):
         if not body.strip():
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
+        # --- Fallthrough: unrecognized message ---
+        # Check if user has connected Google Calendar
+        onboarding = self._maybe_onboarding(request, from_number)
+        if onboarding is not None:
+            return onboarding
+
         current_week = datetime.datetime.now().isocalendar()[1]
 
         entry = StandupEntry.objects.create(
@@ -76,6 +111,53 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         response.message(reply_text)
 
+        return HttpResponse(str(response), content_type='application/xml')
+
+    # ------------------------------------------------------------------ #
+    # Help and onboarding
+    # ------------------------------------------------------------------ #
+
+    def _handle_help(self):
+        response = MessagingResponse()
+        response.message(HELP_TEXT)
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _maybe_onboarding(self, request, from_number):
+        """
+        If the user has NO CalendarToken (or token with no access_token),
+        send the onboarding message with the OAuth URL.
+        For connected users, send the help message.
+        Returns None if no special handling needed (i.e. let standup logging proceed).
+        """
+        from apps.calendar_bot.models import CalendarToken
+
+        try:
+            token = CalendarToken.objects.get(phone_number=from_number)
+            has_calendar = bool(token.access_token)
+        except CalendarToken.DoesNotExist:
+            has_calendar = False
+
+        if not has_calendar:
+            # Build the OAuth start URL
+            auth_url = request.build_absolute_uri(
+                f'/calendar/auth/start/?phone={from_number}'
+            )
+            onboarding_text = (
+                "Hi! I'm your WhatsApp calendar assistant.\n"
+                "\n"
+                "To get started, connect your Google Calendar:\n"
+                f"{auth_url}\n"
+                "\n"
+                "Once connected, I'll send your daily briefing and answer "
+                "questions about your schedule."
+            )
+            response = MessagingResponse()
+            response.message(onboarding_text)
+            return HttpResponse(str(response), content_type='application/xml')
+
+        # Connected user with unrecognized message -> help
+        response = MessagingResponse()
+        response.message(HELP_TEXT)
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
