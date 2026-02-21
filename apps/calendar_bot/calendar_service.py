@@ -176,6 +176,78 @@ def get_events_for_date(phone_number, target_date, exclude_birthdays=False):
     return all_events
 
 
+def create_event(phone_number, target_date, start_time_str, end_time_str, title,
+                 description=None, location=None):
+    """
+    Create a Google Calendar event for the given phone number.
+
+    Args:
+        phone_number: str
+        target_date: datetime.date
+        start_time_str: 'HH:MM' 24h string
+        end_time_str: 'HH:MM' 24h string
+        title: str
+        description: str or None
+        location: str or None
+
+    Returns:
+        (True, event_id) on success
+        (False, error_message_str) on failure
+    """
+    logger.info(
+        'create_event called: phone=%s date=%s start=%s end=%s title=%r',
+        phone_number, target_date, start_time_str, end_time_str, title,
+    )
+
+    token = CalendarToken.objects.filter(
+        phone_number=phone_number
+    ).order_by('created_at').first()
+    if token is None:
+        return False, 'no_token'
+
+    user_tz = get_user_tz(phone_number)
+
+    try:
+        start_h, start_m = [int(x) for x in start_time_str.split(':')]
+        end_h, end_m = [int(x) for x in end_time_str.split(':')]
+    except (ValueError, AttributeError) as exc:
+        logger.error('create_event: invalid time format: %s', exc)
+        return False, 'invalid_time'
+
+    start_dt = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day, start_h, start_m)
+    )
+    end_dt = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day, end_h, end_m)
+    )
+
+    event_body = {
+        'summary': title[:200],
+        'start': {'dateTime': start_dt.isoformat(), 'timeZone': str(user_tz)},
+        'end': {'dateTime': end_dt.isoformat(), 'timeZone': str(user_tz)},
+    }
+    if description:
+        event_body['description'] = description
+    if location:
+        event_body['location'] = location
+
+    try:
+        service = get_calendar_service(token)
+        created = service.events().insert(calendarId='primary', body=event_body).execute()
+        event_id = created.get('id', '')
+        logger.info(
+            'create_event success: phone=%s event_id=%s title=%r',
+            phone_number, event_id, title,
+        )
+        return True, event_id
+    except Exception:
+        logger.exception(
+            'create_event API error: phone=%s title=%r',
+            phone_number, title,
+        )
+        return False, 'api_error'
+
+
 def get_birthdays_next_week(phone_number):
     """
     Fetch birthday events from the user's 'Birthdays' Google Calendar
@@ -304,6 +376,90 @@ def get_birthdays_next_week(phone_number):
         phone_number, len(all_birthdays),
     )
     return all_birthdays
+
+
+def get_free_slots_for_date(phone_number, target_date):
+    """
+    Calculate free time slots >= 30 min within working hours (08:00-19:00)
+    for the given date.
+    Returns list of dicts: [{'start': 'HH:MM', 'end': 'HH:MM', 'minutes': int}]
+    """
+    WORKDAY_START_HOUR = 8
+    WORKDAY_END_HOUR = 19
+    MIN_FREE_SLOT_MINUTES = 30
+
+    user_tz = get_user_tz(phone_number)
+
+    try:
+        events = get_events_for_date(phone_number, target_date, exclude_birthdays=True)
+    except Exception:
+        logger.exception('get_free_slots_for_date: error fetching events phone=%s date=%s',
+                         phone_number, target_date)
+        return None  # signal error
+
+    timed_events = [ev for ev in events if ev['start'] is not None]
+
+    work_start = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day,
+                          WORKDAY_START_HOUR, 0, 0)
+    )
+    work_end = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day,
+                          WORKDAY_END_HOUR, 0, 0)
+    )
+
+    if not timed_events:
+        return [{'start': f'{WORKDAY_START_HOUR:02d}:00',
+                 'end': f'{WORKDAY_END_HOUR:02d}:00',
+                 'minutes': (WORKDAY_END_HOUR - WORKDAY_START_HOUR) * 60}]
+
+    busy = []
+    for ev in timed_events:
+        ev_start = ev['start']
+        ev_end_raw = ev.get('end')
+        if ev_end_raw:
+            try:
+                ev_end = datetime.datetime.fromisoformat(ev_end_raw).astimezone(user_tz)
+            except (ValueError, TypeError):
+                ev_end = ev_start + datetime.timedelta(hours=1)
+        else:
+            ev_end = ev_start + datetime.timedelta(hours=1)
+        clipped_start = max(ev_start, work_start)
+        clipped_end = min(ev_end, work_end)
+        if clipped_start < clipped_end:
+            busy.append((clipped_start, clipped_end))
+
+    busy.sort(key=lambda x: x[0])
+    merged = []
+    for start, end in busy:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    free_slots = []
+    cursor = work_start
+    for busy_start, busy_end in merged:
+        if cursor < busy_start:
+            slot_minutes = int((busy_start - cursor).total_seconds() / 60)
+            if slot_minutes >= MIN_FREE_SLOT_MINUTES:
+                free_slots.append({
+                    'start': cursor.strftime('%H:%M'),
+                    'end': busy_start.strftime('%H:%M'),
+                    'minutes': slot_minutes,
+                })
+        cursor = max(cursor, busy_end)
+
+    if cursor < work_end:
+        slot_minutes = int((work_end - cursor).total_seconds() / 60)
+        if slot_minutes >= MIN_FREE_SLOT_MINUTES:
+            free_slots.append({
+                'start': cursor.strftime('%H:%M'),
+                'end': work_end.strftime('%H:%M'),
+                'minutes': slot_minutes,
+            })
+
+    return free_slots
 
 
 def sync_calendar_snapshot(token, send_alerts=True):
@@ -763,7 +919,7 @@ def _parse_time_range(time_str):
     time_str = time_str.lower().strip()
 
     # Split on '-' that separates two time parts
-    pattern = r'^(\d{1,2}(?::\d{2})?(?:am|pm)?)-(\d{1,2}(?::\d{2})?(?:am|pm)?)$'
+    pattern = r'^(\d{1,2}(?::\d{2})?(?:am|pm)?)-((\d{1,2})(?::\d{2})?(?:am|pm)?)$'
     m = re.match(pattern, time_str, re.IGNORECASE)
     if not m:
         return None
