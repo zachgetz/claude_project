@@ -219,6 +219,8 @@ class WhatsAppWebhookView(APIView):
 
     def _handle_connect_calendar(self, request, from_number):
         """Reply with the OAuth link for connecting another Google Calendar account."""
+        import apps.standup.strings_he as strings_he
+
         webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', '')
         if webhook_base_url:
             auth_url = webhook_base_url.rstrip('/') + f'/calendar/auth/start/?phone={from_number}'
@@ -226,15 +228,12 @@ class WhatsAppWebhookView(APIView):
             auth_url = request.build_absolute_uri(f'/calendar/auth/start/?phone={from_number}')
 
         response = MessagingResponse()
-        response.message(
-            f'Connect your Google Calendar here:\n{auth_url}\n\n'
-            '\u26a0\ufe0f Google may show a safety warning. Tap \'Advanced\' \u2192 \'Go to app (unsafe)\' to continue.\n\n'
-            'To add a second account, visit the same link after connecting the first.'
-        )
+        response.message(strings_he.CONNECT_CALENDAR_MSG.format(auth_url=auth_url))
         return HttpResponse(str(response), content_type='application/xml')
 
     def _handle_my_calendars(self, from_number):
         """List all connected CalendarToken rows for this phone."""
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.models import CalendarToken
 
         tokens = list(
@@ -243,12 +242,9 @@ class WhatsAppWebhookView(APIView):
 
         response = MessagingResponse()
         if not tokens:
-            response.message(
-                '\U0001f4f5 No Google Calendar accounts connected. '
-                'Send "connect calendar" to add one.'
-            )
+            response.message(strings_he.NO_CALENDARS_CONNECTED)
         else:
-            lines = [f'Connected calendars ({len(tokens)}):']
+            lines = [f'לוחות שנה מחוברים ({len(tokens)}):']
             for i, token in enumerate(tokens, start=1):
                 email_display = token.account_email or '(unknown email)'
                 label_display = token.account_label or 'primary'
@@ -266,8 +262,8 @@ class WhatsAppWebhookView(APIView):
         if not arg:
             response = MessagingResponse()
             response.message(
-                'Please specify which calendar to remove.\n'
-                'Example: "remove calendar work" or "remove calendar user@gmail.com"'
+                'אנא ציין איזה לוח שנה להסיר.\n'
+                'לדוגמה: "הסר לוח שנה work" או "הסר לוח שנה user@gmail.com"'
             )
             return HttpResponse(str(response), content_type='application/xml')
 
@@ -280,8 +276,7 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         if token is None:
             response.message(
-                f'No connected calendar found matching "{arg}".\n'
-                'Send "my calendars" to see connected accounts.'
+                f'לא נמצא לוח שנה תואם ל-"{arg}". שלח "הלוחות שלי" לרשימה.'
             )
         else:
             email_display = token.account_email or token.account_label
@@ -292,7 +287,7 @@ class WhatsAppWebhookView(APIView):
                 token.account_email,
                 token.account_label,
             )
-            response.message(f'Removed calendar: {email_display}')
+            response.message(f'\u2705 לוח השנה הוסר: {email_display}')
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
@@ -300,6 +295,7 @@ class WhatsAppWebhookView(APIView):
     # ------------------------------------------------------------------ #
 
     def _handle_block_command(self, from_number, body):
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.calendar_service import handle_block_command
         from apps.calendar_bot.models import CalendarToken
 
@@ -313,10 +309,7 @@ class WhatsAppWebhookView(APIView):
                 from_number,
             )
             response = MessagingResponse()
-            response.message(
-                '\U0001f4f2 Please connect your Google Calendar first. '
-                'Send "connect calendar" to get started.'
-            )
+            response.message(strings_he.NO_CALENDAR_CONNECTED)
             return HttpResponse(str(response), content_type='application/xml')
 
         reply_text = handle_block_command(from_number, body)
@@ -455,6 +448,7 @@ class WhatsAppWebhookView(APIView):
 
     def _try_next_meeting(self, from_number):
         """Find the next upcoming meeting from now."""
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
         from apps.calendar_bot.models import CalendarToken
 
@@ -491,26 +485,20 @@ class WhatsAppWebhookView(APIView):
                     minutes_until = int(time_until.total_seconds() / 60)
 
                     if minutes_until < 60:
-                        until_str = f'in {minutes_until} minutes'
+                        until_str = f'בעוד {minutes_until} דקות'
                     elif minutes_until < 120:
-                        until_str = f'in {minutes_until // 60} hour {minutes_until % 60} minutes'
+                        until_str = f'בעוד {minutes_until // 60} שעה {minutes_until % 60} דקות'
                     else:
                         hours = minutes_until // 60
-                        until_str = f'in {hours} hours'
+                        until_str = f'בעוד {hours} שעות'
 
                     if days_offset == 0:
-                        msg = (
-                            f'\U0001f4cc Your next meeting: {ev["summary"]} at '
-                            f'{ev["start_str"]} ({until_str})'
-                        )
+                        msg = f'\U0001f4cc הפגישה הבאה שלך: {ev["summary"]} בשעה {ev["start_str"]} ({until_str})'
                     elif days_offset == 1:
-                        msg = (
-                            f'\U0001f4cc No more meetings today. '
-                            f'First tomorrow: {ev["start_str"]} {ev["summary"]}'
-                        )
+                        msg = f'\U0001f4cc אין פגישות היום. ראשונה מחר: {ev["start_str"]} {ev["summary"]}'
                     else:
                         day_label = event_dt.strftime('%A, %b %-d')
-                        msg = f'No more meetings soon. Next: {ev["start_str"]} {ev["summary"]} on {day_label}'
+                        msg = f'\U0001f4cc הפגישה הקרובה: {ev["start_str"]} {ev["summary"]} ב{day_label}'
 
                     logger.info(
                         'Next meeting found for phone=%s: %r days_offset=%d',
@@ -522,11 +510,12 @@ class WhatsAppWebhookView(APIView):
                     return HttpResponse(str(response), content_type='application/xml')
 
         logger.info('No upcoming meetings found for phone=%s', from_number)
-        response.message('\U0001f389 No more meetings this week!')
+        response.message(strings_he.NO_MEETINGS_WEEK)
         return HttpResponse(str(response), content_type='application/xml')
 
     def _try_free_today(self, from_number):
         """Calculate free slots >= 30 min within working hours 08:00-19:00."""
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
         from apps.calendar_bot.models import CalendarToken
 
@@ -546,7 +535,7 @@ class WhatsAppWebhookView(APIView):
         except Exception:
             logger.exception('Calendar API error fetching events for phone=%s date=%s', from_number, today)
             response = MessagingResponse()
-            response.message('Could not fetch your calendar right now. Please try again later.')
+            response.message(strings_he.CALENDAR_FETCH_ERROR)
             return HttpResponse(str(response), content_type='application/xml')
 
         timed_events = [ev for ev in events if ev['start'] is not None]
@@ -562,7 +551,7 @@ class WhatsAppWebhookView(APIView):
 
         if not timed_events:
             logger.info('No timed events for phone=%s date=%s -- fully free', from_number, today)
-            response.message("\U0001f389 You're completely free today!")
+            response.message(strings_he.FREE_TODAY_FULL)
             return HttpResponse(str(response), content_type='application/xml')
 
         busy = []
@@ -611,10 +600,10 @@ class WhatsAppWebhookView(APIView):
         )
 
         if not free_slots:
-            response.message('\U0001f4a5 Pretty packed today \u2014 no free slots over 30 minutes.')
+            response.message(strings_he.FREE_TODAY_PACKED)
             return HttpResponse(str(response), content_type='application/xml')
 
-        lines = ['\U0001f550 Free slots today:']
+        lines = [strings_he.FREE_SLOTS_HEADER]
         for slot_start, slot_end, slot_minutes in free_slots:
             hours = slot_minutes // 60
             mins = slot_minutes % 60
@@ -633,6 +622,7 @@ class WhatsAppWebhookView(APIView):
 
     def _try_birthdays_next_week(self, from_number):
         """Fetch and display birthday events for the next 7 days."""
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.calendar_service import get_birthdays_next_week
         from apps.calendar_bot.models import CalendarToken
 
@@ -648,15 +638,15 @@ class WhatsAppWebhookView(APIView):
         except Exception:
             logger.exception('Error fetching birthdays for phone=%s', from_number)
             response = MessagingResponse()
-            response.message('Could not fetch birthdays right now. Please try again later.')
+            response.message(strings_he.BIRTHDAYS_FETCH_ERROR)
             return HttpResponse(str(response), content_type='application/xml')
 
         response = MessagingResponse()
         if not birthdays:
-            response.message('\U0001f382 No birthdays in the next 7 days.')
+            response.message(strings_he.NO_BIRTHDAYS)
             return HttpResponse(str(response), content_type='application/xml')
 
-        lines = ['\U0001f382 Birthdays next week:']
+        lines = [strings_he.BIRTHDAYS_HEADER]
         for b in birthdays:
             lines.append(f"\u2022 {b['summary']} \u2014 {b['date']}")
         response.message('\n'.join(lines))
@@ -668,6 +658,7 @@ class WhatsAppWebhookView(APIView):
 
     def _try_day_query(self, from_number, body_lower, exclude_birthdays=False):
         """Returns an HttpResponse if the message is a calendar day query, else None."""
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
         from apps.calendar_bot.query_helpers import resolve_day, format_events_for_day, format_week_view
         from apps.calendar_bot.models import CalendarToken
@@ -724,7 +715,7 @@ class WhatsAppWebhookView(APIView):
                     from_number,
                     target,
                 )
-                response.message('Could not fetch your calendar right now. Please try again later.')
+                response.message(strings_he.CALENDAR_FETCH_ERROR)
                 return HttpResponse(str(response), content_type='application/xml')
             logger.info(
                 'Day query result: phone=%s date=%s events=%d',
@@ -742,6 +733,7 @@ class WhatsAppWebhookView(APIView):
     # ------------------------------------------------------------------ #
 
     def _handle_set_digest(self, from_number, body_lower):
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.models import CalendarToken
 
         if not CalendarToken.objects.filter(phone_number=from_number).exists():
@@ -759,19 +751,19 @@ class WhatsAppWebhookView(APIView):
         if arg == 'off':
             CalendarToken.objects.filter(phone_number=from_number).update(digest_enabled=False)
             logger.info('Digest disabled for phone=%s', from_number)
-            response.message('\U0001f515 Morning digest turned off.')
+            response.message(strings_he.DIGEST_OFF)
             return HttpResponse(str(response), content_type='application/xml')
 
         if arg == 'on':
             CalendarToken.objects.filter(phone_number=from_number).update(digest_enabled=True)
             logger.info('Digest enabled for phone=%s', from_number)
-            response.message('\U0001f514 Morning digest turned on.')
+            response.message(strings_he.DIGEST_ON)
             return HttpResponse(str(response), content_type='application/xml')
 
         if arg == 'always':
             CalendarToken.objects.filter(phone_number=from_number).update(digest_always=True)
             logger.info('Digest set to always-send for phone=%s', from_number)
-            response.message('\u2705 Morning digest will always be sent.')
+            response.message(strings_he.DIGEST_ALWAYS)
             return HttpResponse(str(response), content_type='application/xml')
 
         parsed = _parse_digest_time(arg)
@@ -783,7 +775,7 @@ class WhatsAppWebhookView(APIView):
                 digest_enabled=True,
             )
             logger.info('Digest time set to %02d:%02d for phone=%s', hour, minute, from_number)
-            response.message(f'\u23f0 Morning digest set for {hour:02d}:{minute:02d}.')
+            response.message(strings_he.DIGEST_TIME_SET.format(hour=hour, minute=minute))
             return HttpResponse(str(response), content_type='application/xml')
 
         logger.warning(
@@ -792,13 +784,13 @@ class WhatsAppWebhookView(APIView):
             from_number,
         )
         response.message(
-            'Could not understand digest setting. '
-            'Try: "set digest 7:30am", "set digest off", "set digest on", "set digest always".'
+            'לא הבנתי. נסה: "הגדר תקציר 7:30", "הגדר תקציר כבוי", "הגדר תקציר תמיד".'
         )
         return HttpResponse(str(response), content_type='application/xml')
 
     def _handle_set_timezone(self, from_number, body):
         import pytz
+        import apps.standup.strings_he as strings_he
         from apps.calendar_bot.models import CalendarToken
 
         tz_name = body[len('set timezone '):].strip()
@@ -809,8 +801,7 @@ class WhatsAppWebhookView(APIView):
             logger.warning('Invalid timezone %r from phone=%s', tz_name, from_number)
             response = MessagingResponse()
             response.message(
-                f"Unknown timezone '{tz_name}'. "
-                "Please use a valid tz name, e.g. 'Europe/London' or 'America/New_York'."
+                f"אזור זמן לא מוכר: '{tz_name}'. נסה לדוגמה 'Europe/London' או 'America/New_York'."
             )
             return HttpResponse(str(response), content_type='application/xml')
 
@@ -826,7 +817,7 @@ class WhatsAppWebhookView(APIView):
 
         logger.info('Timezone set to %s for phone=%s', tz_name, from_number)
         response = MessagingResponse()
-        response.message(f"\U0001f30d Timezone set to {tz_name}.")
+        response.message(strings_he.TIMEZONE_SET.format(tz_name=tz_name))
         return HttpResponse(str(response), content_type='application/xml')
 
     def _handle_summary(self, from_number):
