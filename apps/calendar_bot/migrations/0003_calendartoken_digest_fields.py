@@ -1,31 +1,7 @@
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('calendar_bot', '0002_calendartoken_timezone'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='calendartoken',
-            name='digest_enabled',
-            field=models.BooleanField(default=True),
-        ),
-        migrations.AddField(
-            model_name='calendartoken',
-            name='digest_hour',
-            field=models.IntegerField(default=8),
-        ),
-        migrations.AddField(
-            model_name='calendartoken',
-            name='digest_minute',
-            field=models.IntegerField(default=0),
-        ),
-        migrations.AddField(
-            model_name='calendartoken',
-            name='digest_always',
-            field=models.BooleanField(default=False),
-        ),
-    ]
+# This migration has been renumbered to 0004_calendartoken_digest_fields.py
+# Delete this file if it still exists in your working tree.
+raise ImportError(
+    "This migration has been renumbered. "
+    "Use 0004_calendartoken_digest_fields.py instead. "
+    "Delete this file."
+)
