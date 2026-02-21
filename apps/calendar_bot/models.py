@@ -27,6 +27,12 @@ class CalendarToken(models.Model):
 
 class CalendarEventSnapshot(models.Model):
     phone_number = models.CharField(max_length=30, db_index=True)
+    token = models.ForeignKey(
+        'CalendarToken',
+        null=True,
+        on_delete=models.CASCADE,
+        related_name='event_snapshots',
+    )
     event_id = models.CharField(max_length=255)
     title = models.CharField(max_length=500)
     start_time = models.DateTimeField()  # timezone-aware
@@ -35,7 +41,7 @@ class CalendarEventSnapshot(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [('phone_number', 'event_id')]
+        unique_together = [('phone_number', 'token', 'event_id')]
 
     def __str__(self):
         return f'CalendarEventSnapshot({self.phone_number}, {self.event_id})'
@@ -43,6 +49,12 @@ class CalendarEventSnapshot(models.Model):
 
 class CalendarWatchChannel(models.Model):
     phone_number = models.CharField(max_length=30, db_index=True)
+    token = models.ForeignKey(
+        'CalendarToken',
+        null=True,
+        on_delete=models.CASCADE,
+        related_name='watch_channels',
+    )
     channel_id = models.UUIDField(default=uuid.uuid4)
     resource_id = models.CharField(max_length=255, blank=True)
     expiry = models.DateTimeField(null=True, blank=True)
