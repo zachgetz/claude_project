@@ -1,7 +1,19 @@
 """
-Tests for TZA-105 features:
-  - 'calendar status' WhatsApp command
-  - renew_watch_channels management command
+TZA-122: Updated tests for TZA-105 features.
+
+After TZA-110, the 'calendar status' WhatsApp command no longer exists — the bot
+is fully menu-driven and Hebrew-only.  The CalendarStatusCommandTests have been
+rewritten to verify equivalent functionality through the new Settings submenu:
+
+  - Settings menu (state='settings_menu') shows calendar-related options
+  - settings_menu + '3' -> connect calendar OAuth link (uses WEBHOOK_BASE_URL)
+  - settings_menu + '4' -> disconnect confirmation
+
+Model-layer tests verify that CalendarWatchChannel and connected-email data is
+still stored correctly; these are not surfaced as a WhatsApp 'status' command
+but remain accessible via the settings menu options.
+
+The renew_watch_channels management command tests are unchanged.
 """
 import datetime
 from io import StringIO
@@ -13,7 +25,8 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from django.urls import reverse
 
-from apps.calendar_bot.models import CalendarToken, CalendarWatchChannel
+from apps.calendar_bot.models import CalendarToken, CalendarWatchChannel, UserMenuState
+from apps.standup.views import _set_state
 
 
 PATCH_PERMISSION = patch(
@@ -38,15 +51,21 @@ def _make_token(phone='whatsapp:+1234567890', email='test@example.com', access_t
 
 
 # ---------------------------------------------------------------------------
-# calendar status command tests
+# Settings menu tests (replaces old 'calendar status' command tests, TZA-122)
 # ---------------------------------------------------------------------------
 
 @override_settings(
     **TWILIO_SETTINGS,
     WEBHOOK_BASE_URL='https://myapp.example.com',
 )
-class CalendarStatusCommandTests(TestCase):
-    """Tests for the 'calendar status' WhatsApp command (TZA-105 Fix 2)."""
+class SettingsMenuTests(TestCase):
+    """
+    TZA-122: Settings menu and connect/disconnect calendar flows.
+
+    These tests replace the old 'calendar status' command tests.  The new
+    menu-driven design exposes calendar-connection management through the
+    Settings submenu (option 5 from the main menu).
+    """
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -62,51 +81,22 @@ class CalendarStatusCommandTests(TestCase):
                 format='multipart',
             )
 
-    def test_calendar_status_returns_200(self):
+    def test_settings_menu_returns_200(self):
+        """Entering the settings menu returns a 200 response."""
         _make_token(phone=self.PHONE)
-        response = self._post('calendar status')
+        _set_state(self.PHONE, 'settings_menu', 1, {})
+        response = self._post('1')  # Timezone option
         self.assertEqual(response.status_code, 200)
 
-    def test_calendar_status_case_insensitive(self):
-        """Command must match case-insensitively."""
+    def test_settings_digit_3_returns_oauth_link_with_webhook_base_url(self):
+        """Settings > option 3 returns an OAuth link containing the WEBHOOK_BASE_URL."""
         _make_token(phone=self.PHONE)
-        response = self._post('Calendar Status')
+        _set_state(self.PHONE, 'settings_menu', 1, {})
+        response = self._post('3')
         self.assertEqual(response.status_code, 200)
-        content = response.content.decode()
-        self.assertIn('Status', content)
-
-    def test_calendar_status_shows_webhook_url_configured(self):
-        _make_token(phone=self.PHONE)
-        response = self._post('calendar status')
         content = response.content.decode()
         self.assertIn('myapp.example.com', content)
-
-    def test_calendar_status_shows_connected_email(self):
-        _make_token(phone=self.PHONE, email='user@gmail.com')
-        response = self._post('calendar status')
-        content = response.content.decode()
-        self.assertIn('user@gmail.com', content)
-
-    def test_calendar_status_shows_watch_channel_expiry(self):
-        token = _make_token(phone=self.PHONE)
-        expiry = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=pytz.UTC)
-        CalendarWatchChannel.objects.create(
-            phone_number=self.PHONE,
-            token=token,
-            resource_id='res1',
-            expiry=expiry,
-        )
-        response = self._post('calendar status')
-        content = response.content.decode()
-        self.assertIn('2026-03-01', content)
-
-    def test_calendar_status_shows_no_active_channel_when_none(self):
-        _make_token(phone=self.PHONE)
-        # No CalendarWatchChannel created
-        response = self._post('calendar status')
-        content = response.content.decode()
-        # Should indicate no active channel (Hebrew text for no active channel)
-        self.assertIn('Watch channel', content)
+        self.assertIn('calendar/auth/start', content)
 
     @override_settings(
         TWILIO_ACCOUNT_SID='ACtest',
@@ -114,23 +104,91 @@ class CalendarStatusCommandTests(TestCase):
         TWILIO_WHATSAPP_NUMBER='whatsapp:+15005550006',
         WEBHOOK_BASE_URL='',
     )
-    def test_calendar_status_shows_webhook_not_set(self):
+    def test_settings_digit_3_without_webhook_base_url_falls_back_to_request(self):
+        """When WEBHOOK_BASE_URL is empty, settings > 3 still returns an OAuth link."""
         _make_token(phone=self.PHONE)
-        response = self._post('calendar status')
+        _set_state(self.PHONE, 'settings_menu', 1, {})
+        response = self._post('3')
+        self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('not set', content)
+        self.assertIn('calendar/auth/start', content)
 
-    def test_calendar_status_no_accounts_connected(self):
-        # No token
-        response = self._post('calendar status')
-        content = response.content.decode()
-        self.assertIn('No Google accounts connected', content)
-
-    def test_calendar_status_shows_never_synced_when_no_snapshot(self):
+    def test_settings_digit_3_includes_phone_in_oauth_url(self):
+        """Connect calendar URL contains the user phone number."""
         _make_token(phone=self.PHONE)
-        response = self._post('calendar status')
+        _set_state(self.PHONE, 'settings_menu', 1, {})
+        response = self._post('3')
+        self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('never', content)
+        self.assertIn('phone', content)
+
+    def test_settings_digit_4_shows_disconnect_confirmation(self):
+        """Settings > option 4 shows the disconnect-calendar confirmation."""
+        _make_token(phone=self.PHONE)
+        _set_state(self.PHONE, 'settings_menu', 1, {})
+        response = self._post('4')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Disconnect confirm text contains Hebrew disconnect word
+        self.assertIn('\u05dc\u05e0\u05ea\u05e7', content)
+
+    def test_unconnected_user_gets_onboarding(self):
+        """A user with no CalendarToken gets onboarding, not the settings menu."""
+        response = self._post('1')  # any digit
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Onboarding greeting contains '\u05d4\u05d9\u05d9' (היי)
+        self.assertIn('\u05d4\u05d9\u05d9', content)
+
+    def test_main_menu_digit_5_enters_settings(self):
+        """From main_menu state, digit '5' enters the settings submenu."""
+        _make_token(phone=self.PHONE)
+        _set_state(self.PHONE, 'main_menu', 1, {})
+        response = self._post('5')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Settings menu header: '\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea' (הגדרות)
+        self.assertIn('\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea', content)
+
+    def test_watch_channel_data_is_stored_in_model(self):
+        """CalendarWatchChannel with expiry is stored correctly in the DB (model-layer test)."""
+        token = _make_token(phone=self.PHONE)
+        expiry = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=pytz.UTC)
+        channel = CalendarWatchChannel.objects.create(
+            phone_number=self.PHONE,
+            token=token,
+            resource_id='res1',
+            expiry=expiry,
+        )
+        channel.refresh_from_db()
+        self.assertEqual(
+            channel.expiry.strftime('%Y-%m-%d'),
+            '2026-03-01',
+        )
+
+    def test_connected_email_stored_in_token(self):
+        """The connected account email is stored on the CalendarToken (model-layer test)."""
+        token = _make_token(phone=self.PHONE, email='user@gmail.com')
+        token.refresh_from_db()
+        self.assertEqual(token.account_email, 'user@gmail.com')
+
+    def test_watch_channel_cascade_deletes_with_token(self):
+        """Deleting a CalendarToken also cascade-deletes its CalendarWatchChannels."""
+        token = _make_token(phone=self.PHONE)
+        CalendarWatchChannel.objects.create(phone_number=self.PHONE, token=token)
+        self.assertEqual(CalendarWatchChannel.objects.filter(phone_number=self.PHONE).count(), 1)
+        token.delete()
+        self.assertEqual(CalendarWatchChannel.objects.filter(phone_number=self.PHONE).count(), 0)
+
+    def test_settings_digit_0_returns_to_main_menu(self):
+        """Inside the settings menu, '0' returns to the main menu."""
+        _make_token(phone=self.PHONE)
+        _set_state(self.PHONE, 'settings_menu', 1, {})
+        response = self._post('0')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Main menu: '\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9' (תפריט ראשי)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
 
 # ---------------------------------------------------------------------------

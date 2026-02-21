@@ -88,7 +88,7 @@ class SetTimezoneCommandTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         # INVALID_OPTION from strings_he
-        self.assertIn('ענה תשובה תקינה', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
 
     def test_digit_3_saves_new_york(self):
         """Selecting digit '3' in timezone_menu saves America/New_York."""
@@ -145,7 +145,7 @@ class SetDigestCommandTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         # DIGEST_INVALID from strings_he
-        self.assertIn('שעה לא תקינה', content)
+        self.assertIn('\u05e9\u05e2\u05d4 \u05dc\u05d0 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
 
     def test_digest_settings_submenu_option_2_shows_prompt(self):
         """From settings_menu state, sending '2' enters digest_prompt and shows HH:MM hint."""
@@ -162,7 +162,7 @@ class SetDigestCommandTests(TestCase):
         response = self._post('0')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
 
 @override_settings(**TWILIO_SETTINGS)
@@ -338,7 +338,7 @@ class HelpCommandTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         # HELP_TEXT from strings_he mentions 'העוזר' (the assistant)
-        self.assertIn('העוזר', content)
+        self.assertIn('\u05d4\u05e2\u05d5\u05d6\u05e8', content)
 
     def test_main_menu_zero_returns_main_menu(self):
         """Sending '0' from main_menu state re-shows the main menu."""
@@ -347,7 +347,7 @@ class HelpCommandTests(TestCase):
         response = self._post('0')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_unconnected_user_gets_onboarding(self):
         """
@@ -360,8 +360,8 @@ class HelpCommandTests(TestCase):
         response = self._post('hello world')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # ONBOARDING_GREETING from strings_he contains 'היי'
-        self.assertIn('היי', content)
+        # ONBOARDING_GREETING from strings_he contains '\u05d4\u05d9\u05d9' (היי)
+        self.assertIn('\u05d4\u05d9\u05d9', content)
 
 
 @override_settings(**TWILIO_SETTINGS)
@@ -391,7 +391,7 @@ class BlockCommandTests(TestCase):
         response = self._post('block tomorrow 2-4pm Focus')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_block_no_token_returns_onboarding(self):
         """User without a CalendarToken sending 'block' receives the onboarding greeting."""
@@ -399,15 +399,15 @@ class BlockCommandTests(TestCase):
         response = self._post('block tomorrow 2-4pm')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Onboarding greeting: 'היי'
-        self.assertIn('היי', content)
+        # Onboarding greeting: '\u05d4\u05d9\u05d9' (היי)
+        self.assertIn('\u05d4\u05d9\u05d9', content)
 
     def test_block_conflict_text_returns_main_menu(self):
         """Connected user sending 'block tomorrow 10-11am Deep Work' gets main menu."""
         response = self._post('block tomorrow 10-11am Deep Work')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_yes_with_pending_block_returns_main_menu(self):
         """
@@ -428,7 +428,7 @@ class BlockCommandTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         # New design: connected user gets main menu, not block confirmation
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_yes_with_no_pending_falls_through(self):
         """YES with no pending block should not return a 'Blocked:' confirmation."""

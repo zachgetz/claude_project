@@ -2,7 +2,8 @@
 Tests for multi-account calendar commands (TZA-78).
 
 Updated for TZA-112: The TZA-110 redesign replaced direct text commands
-('connect calendar', 'my calendars', 'remove calendar') with a menu-driven Hebrew UI.
+('connect calendar', 'my calendars', 'remove calendar') with a menu-dri
+ven Hebrew UI.
 
 In the new design:
   - 'connect calendar' / 'add calendar': now accessed via Settings (5) > 3
@@ -98,7 +99,7 @@ class ConnectCalendarCommandTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         # Connected user gets main menu, not OAuth link directly
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_add_calendar_text_command_no_longer_works(self):
         """
@@ -108,7 +109,7 @@ class ConnectCalendarCommandTests(TestCase):
         response = self._post('add calendar')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
 
 @override_settings(**TWILIO_SETTINGS)
@@ -136,8 +137,8 @@ class MyCalendarsCommandTests(TestCase):
         response = self._post('my calendars')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Unconnected user gets onboarding ('היי')
-        self.assertIn('היי', content)
+        # Unconnected user gets onboarding ('\u05d4\u05d9\u05d9' = \u05d4\u05d9\u05d9)
+        self.assertIn('\u05d4\u05d9\u05d9', content)
 
     def test_my_calendars_with_token_returns_main_menu(self):
         """Sending 'my calendars' with a connected token returns the main menu."""
@@ -145,7 +146,7 @@ class MyCalendarsCommandTests(TestCase):
         response = self._post('my calendars')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_my_calendars_two_tokens_returns_main_menu(self):
         """Sending 'my calendars' with multiple connected tokens still returns main menu."""
@@ -154,7 +155,7 @@ class MyCalendarsCommandTests(TestCase):
         response = self._post('my calendars')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
 
 @override_settings(**TWILIO_SETTINGS)
@@ -183,7 +184,7 @@ class RemoveCalendarCommandTests(TestCase):
         response = self._post('remove calendar work@example.com')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_remove_calendar_text_returns_main_menu_by_label(self):
         """Sending 'remove calendar work' returns main menu for connected user."""
@@ -191,15 +192,15 @@ class RemoveCalendarCommandTests(TestCase):
         response = self._post('remove calendar work')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_remove_calendar_no_token_returns_onboarding(self):
         """Sending 'remove calendar nonexistent@example.com' with no token returns onboarding."""
         response = self._post('remove calendar nonexistent@example.com')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Unconnected user gets onboarding ('היי')
-        self.assertIn('היי', content)
+        # Unconnected user gets onboarding ('\u05d4\u05d9\u05d9' = \u05d4\u05d9\u05d9)
+        self.assertIn('\u05d4\u05d9\u05d9', content)
 
     def test_remove_calendar_no_identifier_returns_main_menu_or_onboarding(self):
         """Sending 'remove calendar' (no identifier) returns a valid 200 response."""
