@@ -7,6 +7,13 @@ from twilio.twiml.messaging_response import MessagingResponse
 from apps.standup.permissions import TwilioSignaturePermission
 from apps.standup.models import StandupEntry
 
+NEXT_MEETING_TRIGGERS = {'next meeting', 'next', "what's next", 'whats next'}
+FREE_TODAY_TRIGGERS = {'free today', 'am i free', 'free time', 'when am i free'}
+
+WORKDAY_START_HOUR = 8
+WORKDAY_END_HOUR = 19
+MIN_FREE_SLOT_MINUTES = 30
+
 
 class WhatsAppWebhookView(APIView):
     permission_classes = [TwilioSignaturePermission]
@@ -27,6 +34,18 @@ class WhatsAppWebhookView(APIView):
         # Handle set digest command
         if body_lower.startswith('set digest'):
             return self._handle_set_digest(from_number, body_lower)
+
+        # Handle instant queries: next meeting
+        if body_lower in NEXT_MEETING_TRIGGERS:
+            result = self._try_next_meeting(from_number)
+            if result is not None:
+                return result
+
+        # Handle instant queries: free today
+        if body_lower in FREE_TODAY_TRIGGERS:
+            result = self._try_free_today(from_number)
+            if result is not None:
+                return result
 
         # Handle day queries
         day_result = self._try_day_query(from_number, body_lower)
@@ -60,6 +79,169 @@ class WhatsAppWebhookView(APIView):
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
+    # Instant queries
+    # ------------------------------------------------------------------ #
+
+    def _try_next_meeting(self, from_number):
+        """Find the next upcoming meeting from now."""
+        from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
+        from apps.calendar_bot.models import CalendarToken
+
+        try:
+            token = CalendarToken.objects.get(phone_number=from_number)
+            if not token.access_token:
+                return None
+        except CalendarToken.DoesNotExist:
+            return None
+
+        user_tz = get_user_tz(from_number)
+        now_local = datetime.datetime.now(tz=user_tz)
+        today = now_local.date()
+
+        response = MessagingResponse()
+
+        # Check today first, then tomorrow, then up to 7 days out
+        for days_offset in range(8):
+            check_date = today + datetime.timedelta(days=days_offset)
+            try:
+                events = get_events_for_date(from_number, check_date)
+            except Exception:
+                events = []
+
+            for ev in events:
+                if ev['start'] is None:  # all-day event — skip for next meeting
+                    continue
+                event_dt = ev['start']
+                if event_dt > now_local:
+                    # Found the next meeting
+                    time_until = event_dt - now_local
+                    minutes_until = int(time_until.total_seconds() / 60)
+
+                    if minutes_until < 60:
+                        until_str = f'in {minutes_until} minutes'
+                    elif minutes_until < 120:
+                        until_str = f'in {minutes_until // 60} hour {minutes_until % 60} minutes'
+                    else:
+                        hours = minutes_until // 60
+                        until_str = f'in {hours} hours'
+
+                    if days_offset == 0:
+                        msg = (
+                            f'Your next meeting: {ev["summary"]} at '
+                            f'{ev["start_str"]} ({until_str})'
+                        )
+                    elif days_offset == 1:
+                        msg = (
+                            f'No more meetings today. '
+                            f'First tomorrow: {ev["start_str"]} {ev["summary"]}'
+                        )
+                    else:
+                        day_label = event_dt.strftime('%A, %b %-d')
+                        msg = f'No more meetings soon. Next: {ev["start_str"]} {ev["summary"]} on {day_label}'
+
+                    response.message(msg)
+                    return HttpResponse(str(response), content_type='application/xml')
+
+        response.message('No more meetings this week.')
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _try_free_today(self, from_number):
+        """Calculate free slots >= 30 min within working hours 08:00-19:00."""
+        from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
+        from apps.calendar_bot.models import CalendarToken
+
+        try:
+            token = CalendarToken.objects.get(phone_number=from_number)
+            if not token.access_token:
+                return None
+        except CalendarToken.DoesNotExist:
+            return None
+
+        user_tz = get_user_tz(from_number)
+        today = datetime.datetime.now(tz=user_tz).date()
+
+        try:
+            events = get_events_for_date(from_number, today)
+        except Exception as e:
+            response = MessagingResponse()
+            response.message(f'Could not fetch calendar: {e}')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        # Filter to timed events only, within working hours
+        timed_events = [ev for ev in events if ev['start'] is not None]
+
+        work_start = user_tz.localize(
+            datetime.datetime(today.year, today.month, today.day, WORKDAY_START_HOUR, 0, 0)
+        )
+        work_end = user_tz.localize(
+            datetime.datetime(today.year, today.month, today.day, WORKDAY_END_HOUR, 0, 0)
+        )
+
+        response = MessagingResponse()
+
+        if not timed_events:
+            response.message("You're completely free today.")
+            return HttpResponse(str(response), content_type='application/xml')
+
+        # Build list of (start, end) for events that overlap working hours
+        busy = []
+        for ev in timed_events:
+            ev_start = ev['start']
+            # We don't have end time in our current structure; assume 1h duration
+            ev_end = ev_start + datetime.timedelta(hours=1)
+            # Clip to working hours
+            clipped_start = max(ev_start, work_start)
+            clipped_end = min(ev_end, work_end)
+            if clipped_start < clipped_end:
+                busy.append((clipped_start, clipped_end))
+
+        # Merge overlapping busy slots
+        busy.sort(key=lambda x: x[0])
+        merged = []
+        for start, end in busy:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+
+        # Find free slots
+        free_slots = []
+        cursor = work_start
+        for busy_start, busy_end in merged:
+            if cursor < busy_start:
+                slot_minutes = int((busy_start - cursor).total_seconds() / 60)
+                if slot_minutes >= MIN_FREE_SLOT_MINUTES:
+                    free_slots.append((cursor, busy_start, slot_minutes))
+            cursor = max(cursor, busy_end)
+
+        # Check after last event
+        if cursor < work_end:
+            slot_minutes = int((work_end - cursor).total_seconds() / 60)
+            if slot_minutes >= MIN_FREE_SLOT_MINUTES:
+                free_slots.append((cursor, work_end, slot_minutes))
+
+        if not free_slots:
+            response.message('Pretty packed today \u2014 no free slots over 30 minutes.')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        lines = ['Free slots today:']
+        for slot_start, slot_end, slot_minutes in free_slots:
+            hours = slot_minutes // 60
+            mins = slot_minutes % 60
+            if hours > 0 and mins > 0:
+                dur_str = f'{hours}.{mins // 6}0 hrs' if mins == 30 else f'{hours}h {mins}m'
+            elif hours > 0:
+                dur_str = f'{hours} hrs' if hours > 1 else '1 hr'
+            else:
+                dur_str = f'{slot_minutes} min'
+            lines.append(
+                f'\u2022 {slot_start.strftime("%H:%M")}\u2013{slot_end.strftime("%H:%M")} ({dur_str})'
+            )
+
+        response.message('\n'.join(lines))
+        return HttpResponse(str(response), content_type='application/xml')
+
+    # ------------------------------------------------------------------ #
     # Day query handling
     # ------------------------------------------------------------------ #
 
@@ -69,10 +251,9 @@ class WhatsAppWebhookView(APIView):
         from apps.calendar_bot.query_helpers import resolve_day, format_events_for_day, format_week_view
         from apps.calendar_bot.models import CalendarToken
 
-        # Check if user has a CalendarToken with OAuth credentials
         try:
             token = CalendarToken.objects.get(phone_number=from_number)
-            if not token.access_token:  # placeholder token (timezone-only)
+            if not token.access_token:
                 return None
         except CalendarToken.DoesNotExist:
             return None
@@ -88,7 +269,6 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
 
         if target == 'week':
-            # Monday to Sunday of current week
             week_start = today - datetime.timedelta(days=today.weekday())
             week_end = week_start + datetime.timedelta(days=6)
             week_events = {}
