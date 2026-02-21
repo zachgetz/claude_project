@@ -48,3 +48,16 @@ class CalendarWatchChannel(models.Model):
 
     def __str__(self):
         return f'CalendarWatchChannel({self.phone_number}, {self.channel_id})'
+
+
+class PendingBlockConfirmation(models.Model):
+    phone_number = models.CharField(max_length=30)
+    event_data = models.JSONField()  # {date, start, end, title}
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # one pending per user max
+        unique_together = [('phone_number',)]
+
+    def __str__(self):
+        return f'PendingBlockConfirmation({self.phone_number})'
