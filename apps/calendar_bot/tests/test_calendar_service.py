@@ -2,6 +2,7 @@
 Unit tests for apps.calendar_bot.calendar_service.
 
 All Google API and credential calls are mocked; no real HTTP is made.
+Updated for TZA-78 multi-account: sync_calendar_snapshot now takes a token object.
 """
 import datetime
 from unittest.mock import patch, MagicMock
@@ -12,9 +13,10 @@ from django.test import TestCase, override_settings
 from apps.calendar_bot.models import CalendarToken, CalendarEventSnapshot
 
 
-def _make_token(phone='+1234567890', tz='UTC'):
+def _make_token(phone='+1234567890', tz='UTC', email='test@example.com'):
     return CalendarToken.objects.create(
         phone_number=phone,
+        account_email=email,
         access_token='access_abc',
         refresh_token='refresh_xyz',
         timezone=tz,
@@ -44,14 +46,13 @@ class GetUserTzTests(TestCase):
 
     def test_returns_user_timezone(self):
         from apps.calendar_bot.calendar_service import get_user_tz
-        _make_token(phone='+1000000001', tz='America/New_York')
+        _make_token(phone='+1000000001', tz='America/New_York', email='tz1@example.com')
         tz = get_user_tz('+1000000001')
         self.assertEqual(str(tz), 'America/New_York')
 
     def test_returns_utc_for_invalid_stored_timezone(self):
         from apps.calendar_bot.calendar_service import get_user_tz
-        token = _make_token(phone='+1000000002', tz='Not/AValidTZ')
-        # pytz.timezone raises; get_user_tz should fall back to UTC
+        _make_token(phone='+1000000002', tz='Not/AValidTZ', email='tz2@example.com')
         tz = get_user_tz('+1000000002')
         self.assertEqual(tz, pytz.UTC)
 
@@ -71,7 +72,7 @@ class SyncCalendarSnapshotTests(TestCase):
     PHONE = '+1234567890'
 
     def setUp(self):
-        _make_token(phone=self.PHONE)
+        self.token = _make_token(phone=self.PHONE, email='sync@example.com')
 
     def _make_service_mock(self, events):
         """Return a mock Google Calendar service whose events().list().execute() returns events."""
@@ -87,7 +88,7 @@ class SyncCalendarSnapshotTests(TestCase):
         event = make_event('evt_1', 'New Meeting', now + datetime.timedelta(hours=1), now + datetime.timedelta(hours=2))
         mock_get_svc.return_value = self._make_service_mock([event])
 
-        changes = sync_calendar_snapshot(self.PHONE)
+        changes = sync_calendar_snapshot(self.token)
 
         new_changes = [c for c in changes if c['type'] == 'new']
         self.assertEqual(len(new_changes), 1)
@@ -104,16 +105,15 @@ class SyncCalendarSnapshotTests(TestCase):
         original_start = now + datetime.timedelta(hours=1)
         new_start = now + datetime.timedelta(hours=3)
 
-        # Create existing snapshot with old start time — set updated_at far in the past
         snap = CalendarEventSnapshot.objects.create(
             phone_number=self.PHONE,
+            token=self.token,
             event_id='evt_reschedule',
             title='Team Meeting',
             start_time=original_start,
             end_time=original_start + datetime.timedelta(hours=1),
             status='active',
         )
-        # Force updated_at to be old (outside debounce window)
         CalendarEventSnapshot.objects.filter(pk=snap.pk).update(
             updated_at=now - datetime.timedelta(minutes=10)
         )
@@ -124,7 +124,7 @@ class SyncCalendarSnapshotTests(TestCase):
         )
         mock_get_svc.return_value = self._make_service_mock([event])
 
-        changes = sync_calendar_snapshot(self.PHONE)
+        changes = sync_calendar_snapshot(self.token)
 
         rescheduled = [c for c in changes if c['type'] == 'rescheduled']
         self.assertEqual(len(rescheduled), 1)
@@ -138,9 +138,9 @@ class SyncCalendarSnapshotTests(TestCase):
         now = datetime.datetime.now(tz=pytz.UTC)
         old_start = now + datetime.timedelta(hours=1)
 
-        # Snapshot exists but Google returns no events
         snap = CalendarEventSnapshot.objects.create(
             phone_number=self.PHONE,
+            token=self.token,
             event_id='evt_cancelled',
             title='Gone Meeting',
             start_time=old_start,
@@ -153,13 +153,12 @@ class SyncCalendarSnapshotTests(TestCase):
 
         mock_get_svc.return_value = self._make_service_mock([])  # no events returned
 
-        changes = sync_calendar_snapshot(self.PHONE)
+        changes = sync_calendar_snapshot(self.token)
 
         cancelled = [c for c in changes if c['type'] == 'cancelled']
         self.assertEqual(len(cancelled), 1)
         self.assertEqual(cancelled[0]['event_id'], 'evt_cancelled')
 
-        # Status should be updated in DB
         snap.refresh_from_db()
         self.assertEqual(snap.status, 'cancelled')
 
@@ -172,6 +171,7 @@ class SyncCalendarSnapshotTests(TestCase):
 
         CalendarEventSnapshot.objects.create(
             phone_number=self.PHONE,
+            token=self.token,
             event_id='evt_same',
             title='Stable Meeting',
             start_time=start_time,
@@ -182,7 +182,7 @@ class SyncCalendarSnapshotTests(TestCase):
         event = make_event('evt_same', 'Stable Meeting', start_time, start_time + datetime.timedelta(hours=1))
         mock_get_svc.return_value = self._make_service_mock([event])
 
-        changes = sync_calendar_snapshot(self.PHONE)
+        changes = sync_calendar_snapshot(self.token)
         self.assertEqual(changes, [])
 
     @patch('apps.calendar_bot.calendar_service.get_calendar_service')
@@ -193,23 +193,21 @@ class SyncCalendarSnapshotTests(TestCase):
         original_start = now + datetime.timedelta(hours=1)
         new_start = now + datetime.timedelta(hours=3)
 
-        snap = CalendarEventSnapshot.objects.create(
+        CalendarEventSnapshot.objects.create(
             phone_number=self.PHONE,
+            token=self.token,
             event_id='evt_debounce',
             title='Debounced Meeting',
             start_time=original_start,
             end_time=original_start + datetime.timedelta(hours=1),
             status='active',
         )
-        # updated_at is recent (within 5-minute debounce window) — default auto_now
-        # so we do NOT override updated_at here
 
         event = make_event('evt_debounce', 'Debounced Meeting', new_start, new_start + datetime.timedelta(hours=1))
         mock_get_svc.return_value = self._make_service_mock([event])
 
-        changes = sync_calendar_snapshot(self.PHONE)
+        changes = sync_calendar_snapshot(self.token)
 
-        # Debounce should suppress the rescheduled change
         rescheduled = [c for c in changes if c['type'] == 'rescheduled']
         self.assertEqual(len(rescheduled), 0)
 
@@ -226,6 +224,6 @@ class SyncCalendarSnapshotTests(TestCase):
         }
         mock_get_svc.return_value = self._make_service_mock([all_day_event])
 
-        changes = sync_calendar_snapshot(self.PHONE)
+        changes = sync_calendar_snapshot(self.token)
         self.assertEqual(changes, [])
         self.assertFalse(CalendarEventSnapshot.objects.filter(event_id='evt_allday').exists())
