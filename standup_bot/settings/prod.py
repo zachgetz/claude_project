@@ -1,3 +1,4 @@
+import dj_database_url
 from .base import *
 
 DEBUG = False
@@ -5,16 +6,14 @@ DEBUG = False
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='').split(',')
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
-        'CONN_MAX_AGE': 60,
-    }
+    'default': dj_database_url.config(
+        default=config('DATABASE_URL'),
+        conn_max_age=60,
+        ssl_require=True,
+    )
 }
+
+CELERY_BROKER_URL = config('REDIS_URL', default='redis://localhost:6379/0')
 
 # Security headers
 SECURE_SSL_REDIRECT = True
