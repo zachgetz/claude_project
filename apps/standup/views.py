@@ -816,7 +816,9 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
 
         if target == 'week':
-            week_start = today - datetime.timedelta(days=today.weekday())
+            # Israeli calendar: week starts on Sunday (weekday 6 in Python's Mon=0 scheme)
+            # Formula: (today.weekday() + 1) % 7 gives days since last Sunday
+            week_start = today - datetime.timedelta(days=(today.weekday() + 1) % 7)
             week_end = week_start + datetime.timedelta(days=6)
             week_events = {}
             current = week_start
