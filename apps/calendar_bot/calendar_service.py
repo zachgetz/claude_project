@@ -4,7 +4,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-from .models import CalendarToken
+from .models import CalendarToken, CalendarEventSnapshot
 
 
 def get_calendar_service(phone_number):
@@ -93,6 +93,136 @@ def get_events_for_date(phone_number, target_date):
                 'raw': item,
             })
     return events
+
+
+def sync_calendar_snapshot(phone_number):
+    """
+    Fetches events for next 7 days, compares with stored snapshots.
+    Returns list of changes: [{type, event_id, title, old_start, new_start}]
+    Debounce: ignore if same event_id updated less than 5 min ago.
+    Updates snapshots to latest state.
+    """
+    now = datetime.datetime.now(tz=pytz.UTC)
+    debounce_cutoff = now - datetime.timedelta(minutes=5)
+
+    service = get_calendar_service(phone_number)
+    user_tz = get_user_tz(phone_number)
+
+    # Fetch events for next 7 days
+    time_min = now
+    time_max = now + datetime.timedelta(days=7)
+
+    events_result = service.events().list(
+        calendarId='primary',
+        timeMin=time_min.isoformat(),
+        timeMax=time_max.isoformat(),
+        singleEvents=True,
+        orderBy='startTime',
+    ).execute()
+
+    # Build a dict of current events from Google {event_id -> event_item}
+    current_events = {}
+    for item in events_result.get('items', []):
+        event_id = item.get('id')
+        if not event_id:
+            continue
+        start_raw = item.get('start', {})
+        end_raw = item.get('end', {})
+        if 'dateTime' not in start_raw or 'dateTime' not in end_raw:
+            # Skip all-day events for snapshot tracking
+            continue
+        start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
+        end_dt = datetime.datetime.fromisoformat(end_raw['dateTime'])
+        if start_dt.tzinfo is None:
+            start_dt = pytz.UTC.localize(start_dt)
+        if end_dt.tzinfo is None:
+            end_dt = pytz.UTC.localize(end_dt)
+        current_events[event_id] = {
+            'event_id': event_id,
+            'title': item.get('summary', '(No title)'),
+            'start_time': start_dt.astimezone(pytz.UTC),
+            'end_time': end_dt.astimezone(pytz.UTC),
+        }
+
+    # Load existing snapshots for this user
+    existing_snapshots = {
+        snap.event_id: snap
+        for snap in CalendarEventSnapshot.objects.filter(phone_number=phone_number)
+    }
+
+    changes = []
+
+    # Detect new events and rescheduled events
+    for event_id, current in current_events.items():
+        snap = existing_snapshots.get(event_id)
+
+        if snap is None:
+            # New event — create snapshot
+            CalendarEventSnapshot.objects.create(
+                phone_number=phone_number,
+                event_id=event_id,
+                title=current['title'],
+                start_time=current['start_time'],
+                end_time=current['end_time'],
+                status='active',
+            )
+            changes.append({
+                'type': 'new',
+                'event_id': event_id,
+                'title': current['title'],
+                'old_start': None,
+                'new_start': current['start_time'],
+            })
+        elif snap.status == 'cancelled':
+            # Was cancelled but now active again — treat as new
+            snap.title = current['title']
+            snap.start_time = current['start_time']
+            snap.end_time = current['end_time']
+            snap.status = 'active'
+            snap.save()
+            changes.append({
+                'type': 'new',
+                'event_id': event_id,
+                'title': current['title'],
+                'old_start': None,
+                'new_start': current['start_time'],
+            })
+        else:
+            # Check for reschedule — compare start_time
+            if snap.start_time != current['start_time']:
+                # Debounce: skip if updated < 5 min ago
+                if snap.updated_at > debounce_cutoff:
+                    continue
+                old_start = snap.start_time
+                snap.title = current['title']
+                snap.start_time = current['start_time']
+                snap.end_time = current['end_time']
+                snap.save()
+                changes.append({
+                    'type': 'rescheduled',
+                    'event_id': event_id,
+                    'title': current['title'],
+                    'old_start': old_start,
+                    'new_start': current['start_time'],
+                })
+
+    # Detect cancelled events (in snapshot but not in current events)
+    for event_id, snap in existing_snapshots.items():
+        if event_id not in current_events and snap.status == 'active':
+            # Debounce: skip if updated < 5 min ago
+            if snap.updated_at > debounce_cutoff:
+                continue
+            snap.status = 'cancelled'
+            snap.save()
+            changes.append({
+                'type': 'cancelled',
+                'event_id': event_id,
+                'title': snap.title,
+                'old_start': snap.start_time,
+                'new_start': None,
+            })
+
+    return changes
 
 
 def _is_expired(token_expiry):

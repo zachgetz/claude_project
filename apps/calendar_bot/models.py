@@ -12,3 +12,19 @@ class CalendarToken(models.Model):
 
     def __str__(self):
         return f'CalendarToken({self.phone_number})'
+
+
+class CalendarEventSnapshot(models.Model):
+    phone_number = models.CharField(max_length=30)
+    event_id = models.CharField(max_length=255)
+    title = models.CharField(max_length=500)
+    start_time = models.DateTimeField()  # timezone-aware
+    end_time = models.DateTimeField()    # timezone-aware
+    status = models.CharField(max_length=20, default='active')  # 'active' or 'cancelled'
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('phone_number', 'event_id')]
+
+    def __str__(self):
+        return f'CalendarEventSnapshot({self.phone_number}, {self.event_id})'
