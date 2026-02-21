@@ -19,7 +19,12 @@ class CalendarAuthStartView(View):
     """
 
     def get(self, request):
-        phone = request.GET.get('phone', '').strip()
+        # Use QueryDict with raw query string to preserve '+' prefix in phone numbers.
+        # request.GET decodes '+' as a space (form-encoding convention), so we use
+        # the raw query string and urllib.parse.parse_qs with keep_blank_values.
+        from urllib.parse import parse_qs
+        raw_phone_list = parse_qs(request.META.get('QUERY_STRING', ''), keep_blank_values=True).get('phone', [''])
+        phone = raw_phone_list[0].strip() if raw_phone_list else ''
         if not phone:
             return HttpResponse('Missing ?phone parameter.', status=400)
 
