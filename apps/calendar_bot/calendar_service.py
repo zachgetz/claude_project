@@ -478,7 +478,7 @@ def _parse_time_range(time_str):
     time_str = time_str.lower().strip()
 
     # Split on '-' that separates two time parts
-    pattern = r'^(\d{1,2}(?::\d{2})?(?:am|pm)?)-((\\d{1,2})(?::\d{2})?(?:am|pm)?)$'
+    pattern = r'^(\d{1,2}(?::\d{2})?(?:am|pm)?)-(\d{1,2}(?::\d{2})?(?:am|pm)?)$'
     m = re.match(pattern, time_str, re.IGNORECASE)
     if not m:
         return None
