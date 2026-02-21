@@ -397,9 +397,11 @@ class WhatsAppWebhookView(APIView):
         import apps.standup.strings_he as s
         from apps.calendar_bot.calendar_service import get_user_tz, create_event
 
-        # Cancel anytime with 0 or 'batel' (Hebrew: cancel)
+        # Cancel anytime with 0 or 'batel' (Hebrew: cancel).
+        # Use _set_state('main_menu') instead of _clear_state so the very next
+        # message is routed via _handle_main_menu_pick and the bot stays responsive.
         if body_stripped in ('0', '\u05d1\u05d8\u05dc'):
-            _clear_state(from_number)
+            _set_state(from_number, 'main_menu', 1, {})
             return _xml(s.SCHEDULE_CANCELLED + '\n' + s.MAIN_MENU_TEXT)
 
         user_tz = get_user_tz(from_number)
@@ -465,10 +467,12 @@ class WhatsAppWebhookView(APIView):
         # Step 7: confirm (asher / batel)
         if step == 7:
             if body_stripped == '\u05d1\u05d8\u05dc':
-                _clear_state(from_number)
+                # Use _set_state so the bot remains responsive at main_menu level.
+                _set_state(from_number, 'main_menu', 1, {})
                 return _xml(s.SCHEDULE_CANCELLED + '\n' + s.MAIN_MENU_TEXT)
             if body_stripped == '\u05d0\u05e9\u05e8':
-                _clear_state(from_number)
+                # Use _set_state so the bot remains responsive at main_menu level.
+                _set_state(from_number, 'main_menu', 1, {})
                 target_date = datetime.date.fromisoformat(data['date'])
                 ok, result = create_event(
                     from_number,
@@ -492,8 +496,8 @@ class WhatsAppWebhookView(APIView):
             # Any other input at confirmation step -> re-show summary
             return _xml(s.SCHEDULE_INVALID + '\n' + self._build_schedule_summary(data))
 
-        # Unexpected step: reset
-        _clear_state(from_number)
+        # Unexpected step: reset to main_menu state so the bot stays responsive.
+        _set_state(from_number, 'main_menu', 1, {})
         return _xml(s.MAIN_MENU_TEXT)
 
     def _build_schedule_summary(self, data):
