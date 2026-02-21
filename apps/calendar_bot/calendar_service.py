@@ -179,18 +179,28 @@ def get_events_for_date(phone_number, target_date, exclude_birthdays=False):
 def get_birthdays_next_week(phone_number):
     """
     Fetch birthday events from the user's 'Birthdays' Google Calendar
-    for the next 7 days (starting from today).
+    for the current Israeli week (Sunday through Saturday).
     Returns a list of dicts with 'summary' and 'date' (formatted string) keys.
     """
     user_tz = get_user_tz(phone_number)
     now_local = datetime.datetime.now(tz=user_tz)
     today = now_local.date()
-    end_date = today + datetime.timedelta(days=7)
+    # Israeli calendar: week starts on Sunday (Python weekday: Mon=0, ..., Sun=6)
+    # (today.weekday() + 1) % 7 gives the number of days since last Sunday
+    week_start = today - datetime.timedelta(days=(today.weekday() + 1) % 7)
+    week_end = week_start + datetime.timedelta(days=6)
     time_min = user_tz.localize(
-        datetime.datetime(today.year, today.month, today.day, 0, 0, 0)
+        datetime.datetime(week_start.year, week_start.month, week_start.day, 0, 0, 0)
     )
     time_max = user_tz.localize(
-        datetime.datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59)
+        datetime.datetime(week_end.year, week_end.month, week_end.day, 23, 59, 59)
+    )
+
+    logger.info(
+        'get_birthdays_next_week: phone=%s week_start=%s week_end=%s',
+        phone_number,
+        week_start,
+        week_end,
     )
 
     tokens = list(CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at'))
@@ -220,9 +230,30 @@ def get_birthdays_next_week(phone_number):
             continue
 
         birthday_cal_id = None
-        for cal in cal_list.get('items', []):
-            if cal.get('summary', '').strip().lower() == 'birthdays':
-                birthday_cal_id = cal['id']
+        cal_items = cal_list.get('items', [])
+        logger.info(
+            'get_birthdays_next_week: phone=%s email=%s calendars_found=%d names=%r',
+            phone_number,
+            token.account_email,
+            len(cal_items),
+            [c.get('summary', '') for c in cal_items],
+        )
+        for cal in cal_items:
+            cal_id = cal.get('id', '')
+            cal_summary = cal.get('summary', '').strip()
+            # Match by known Google birthday calendar ID or case-insensitive summary
+            if (
+                cal_id == '#contacts@group.v.calendar.google.com'
+                or cal_summary.lower() == 'birthdays'
+            ):
+                birthday_cal_id = cal_id
+                logger.info(
+                    'Birthday calendar found: phone=%s email=%s cal_id=%s summary=%r',
+                    phone_number,
+                    token.account_email,
+                    cal_id,
+                    cal_summary,
+                )
                 break
 
         if birthday_cal_id is None:
