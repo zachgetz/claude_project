@@ -7,6 +7,7 @@ class CalendarToken(models.Model):
     phone_number = models.CharField(max_length=30)
     account_email = models.CharField(max_length=255, default='')
     account_label = models.CharField(max_length=50, default='primary')
+    name = models.CharField(max_length=100, blank=True, default='')
     access_token = models.TextField()
     refresh_token = models.TextField()
     token_expiry = models.DateTimeField(null=True, blank=True)
