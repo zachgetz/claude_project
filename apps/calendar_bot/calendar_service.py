@@ -23,14 +23,14 @@ def get_calendar_service(phone_number):
         client_secret=_get_client_secret(),
     )
 
-    # Refresh if expired
-    if token.token_expiry and _is_expired(token.token_expiry):
-        creds.refresh(Request())
-        # Persist refreshed token
-        token.access_token = creds.token
-        if creds.expiry:
-            token.token_expiry = creds.expiry.replace(tzinfo=pytz.UTC)
-        token.save()
+    # Refresh if token is not valid (handles token_expiry=None safely)
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            token.access_token = creds.token
+            if creds.expiry:
+                token.token_expiry = creds.expiry.replace(tzinfo=pytz.UTC)
+            token.save()
 
     return build('calendar', 'v3', credentials=creds)
 
@@ -53,7 +53,7 @@ def get_events_for_date(phone_number, target_date):
     """
     Fetch all-day and timed events from Google Calendar for a specific
     date (datetime.date) in the user's local timezone.
-    Returns a list of event dicts with 'start', 'summary' keys.
+    Returns a list of event dicts with 'start', 'summary', 'end' keys.
     """
     user_tz = get_user_tz(phone_number)
     service = get_calendar_service(phone_number)
@@ -73,6 +73,7 @@ def get_events_for_date(phone_number, target_date):
     events = []
     for item in events_result.get('items', []):
         start_raw = item.get('start', {})
+        end_raw = item.get('end', {})
         # timed event
         if 'dateTime' in start_raw:
             start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
@@ -83,6 +84,7 @@ def get_events_for_date(phone_number, target_date):
                 'start': start_local,
                 'start_str': start_local.strftime('%H:%M'),
                 'summary': item.get('summary', '(No title)'),
+                'end': end_raw.get('dateTime', end_raw.get('date')),
                 'raw': item,
             })
         else:
@@ -91,17 +93,19 @@ def get_events_for_date(phone_number, target_date):
                 'start': None,
                 'start_str': 'All day',
                 'summary': item.get('summary', '(No title)'),
+                'end': end_raw.get('date'),
                 'raw': item,
             })
     return events
 
 
-def sync_calendar_snapshot(phone_number):
+def sync_calendar_snapshot(phone_number, send_alerts=True):
     """
     Fetches events for next 7 days, compares with stored snapshots.
     Returns list of changes: [{type, event_id, title, old_start, new_start}]
     Debounce: ignore if same event_id updated less than 5 min ago.
     Updates snapshots to latest state.
+    If send_alerts=False, snapshots are updated silently (no changes returned).
     """
     now = datetime.datetime.now(tz=pytz.UTC)
     debounce_cutoff = now - datetime.timedelta(minutes=5)
@@ -144,10 +148,14 @@ def sync_calendar_snapshot(phone_number):
             'end_time': end_dt.astimezone(pytz.UTC),
         }
 
-    # Load existing snapshots for this user
+    # Load existing snapshots for this user (filtered to next 7 days window)
     existing_snapshots = {
         snap.event_id: snap
-        for snap in CalendarEventSnapshot.objects.filter(phone_number=phone_number)
+        for snap in CalendarEventSnapshot.objects.filter(
+            phone_number=phone_number,
+            start_time__gte=time_min,
+            start_time__lte=time_max,
+        )
     }
 
     changes = []
@@ -166,13 +174,14 @@ def sync_calendar_snapshot(phone_number):
                 end_time=current['end_time'],
                 status='active',
             )
-            changes.append({
-                'type': 'new',
-                'event_id': event_id,
-                'title': current['title'],
-                'old_start': None,
-                'new_start': current['start_time'],
-            })
+            if send_alerts:
+                changes.append({
+                    'type': 'new',
+                    'event_id': event_id,
+                    'title': current['title'],
+                    'old_start': None,
+                    'new_start': current['start_time'],
+                })
         elif snap.status == 'cancelled':
             # Was cancelled but now active again — treat as new
             snap.title = current['title']
@@ -180,13 +189,14 @@ def sync_calendar_snapshot(phone_number):
             snap.end_time = current['end_time']
             snap.status = 'active'
             snap.save()
-            changes.append({
-                'type': 'new',
-                'event_id': event_id,
-                'title': current['title'],
-                'old_start': None,
-                'new_start': current['start_time'],
-            })
+            if send_alerts:
+                changes.append({
+                    'type': 'new',
+                    'event_id': event_id,
+                    'title': current['title'],
+                    'old_start': None,
+                    'new_start': current['start_time'],
+                })
         else:
             # Check for reschedule — compare start_time
             if snap.start_time != current['start_time']:
@@ -198,13 +208,14 @@ def sync_calendar_snapshot(phone_number):
                 snap.start_time = current['start_time']
                 snap.end_time = current['end_time']
                 snap.save()
-                changes.append({
-                    'type': 'rescheduled',
-                    'event_id': event_id,
-                    'title': current['title'],
-                    'old_start': old_start,
-                    'new_start': current['start_time'],
-                })
+                if send_alerts:
+                    changes.append({
+                        'type': 'rescheduled',
+                        'event_id': event_id,
+                        'title': current['title'],
+                        'old_start': old_start,
+                        'new_start': current['start_time'],
+                    })
 
     # Detect cancelled events (in snapshot but not in current events)
     for event_id, snap in existing_snapshots.items():
@@ -214,13 +225,14 @@ def sync_calendar_snapshot(phone_number):
                 continue
             snap.status = 'cancelled'
             snap.save()
-            changes.append({
-                'type': 'cancelled',
-                'event_id': event_id,
-                'title': snap.title,
-                'old_start': snap.start_time,
-                'new_start': None,
-            })
+            if send_alerts:
+                changes.append({
+                    'type': 'cancelled',
+                    'event_id': event_id,
+                    'title': snap.title,
+                    'old_start': snap.start_time,
+                    'new_start': None,
+                })
 
     return changes
 
@@ -296,7 +308,7 @@ def handle_block_command(phone_number, body):
             defaults={'event_data': event_data},
         )
         conflict_names = ', '.join(
-            f'"{c.get("summary", "(No title)")}"' for c in conflicts[:3]
+            f'"{ c.get("summary", "(No title)")}"' for c in conflicts[:3]
         )
         time_range = f'{start_hour:02d}:{start_min:02d}-{end_hour:02d}:{end_min:02d}'
         return (
@@ -316,11 +328,18 @@ def confirm_block_command(phone_number):
     Returns confirmation message.
     """
     from .models import PendingBlockConfirmation
+    from django.utils import timezone as tz
+    import datetime as dt
 
     try:
         pending = PendingBlockConfirmation.objects.get(phone_number=phone_number)
     except PendingBlockConfirmation.DoesNotExist:
         return 'No pending block to confirm.'
+
+    # Check expiry (10-minute window)
+    if hasattr(pending, 'pending_at') and tz.now() - pending.pending_at > dt.timedelta(minutes=10):
+        pending.delete()
+        return 'Confirmation expired. Please send the block command again.'
 
     event_data = pending.event_data
     pending.delete()
