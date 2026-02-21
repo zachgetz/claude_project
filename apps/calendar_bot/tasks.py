@@ -106,6 +106,10 @@ def _send_digest_for_phone(client, from_number, phone_number, primary_token):
         len(items),
     )
 
+    # Build name part safely (token.name may not exist yet — TZA-92 adds it)
+    user_name = getattr(primary_token, 'name', '') or ''
+    name_part = f' {user_name}' if user_name else ''
+
     # Skip if no meetings and user hasn't opted into always-send
     if not items and not primary_token.digest_always:
         logger.info(
@@ -116,14 +120,31 @@ def _send_digest_for_phone(client, from_number, phone_number, primary_token):
         return
 
     if not items:
-        message = 'Good morning! No meetings today \U0001f389'
+        message = f'☀️ בוקר טוב{name_part}! 🌟\n\n🎉 אין פגישות היום — תהנה!'
     else:
-        lines = ['Good morning! Your meetings today:']
+        # Count timed events (those with an actual start time, not all-day)
+        timed_count = sum(1 for ev in items if ev.get('start_str', 'All day') != 'All day')
+
+        # Opening greeting
+        greeting = f'☀️ בוקר טוב{name_part}! מקווה שהיום יהיה מדהים 🌟\n\n'
+
+        lines = [greeting + 'הפגישות שלך היום:']
         for ev in items:
             time_str = ev.get('start_str', 'All day')
             summary = ev.get('summary', '(No title)')
             lines.append(f'{time_str} {summary}')
-        message = '\n'.join(lines)
+
+        # Closing line based on timed meeting count
+        if timed_count == 0:
+            closing = '\n\n🎉 אין פגישות היום — תהנה!'
+        elif timed_count <= 4:
+            closing = '\n\n✨ יום פרודוקטיבי לפניך!'
+        elif timed_count <= 6:
+            closing = '\n\n💪 יום עמוס — תזכור לנשום בין פגישות 🧘'
+        else:
+            closing = '\n\n🔥 מרתון פגישות היום! שמור על עצמך'
+
+        message = '\n'.join(lines) + closing
 
     try:
         client.messages.create(
