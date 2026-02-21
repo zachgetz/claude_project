@@ -19,6 +19,10 @@ import logging
 from django.core.management.base import BaseCommand
 from django.conf import settings
 
+# Imported at module level so tests can patch
+# apps.calendar_bot.management.commands.renew_watch_channels.register_watch_channel
+from apps.calendar_bot.sync import register_watch_channel
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +48,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.calendar_bot.models import CalendarToken
-        from apps.calendar_bot.sync import register_watch_channel
 
         phone_filter = options.get('phone')
         dry_run = options.get('dry_run')
