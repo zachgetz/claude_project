@@ -6,8 +6,9 @@ birthday week range in calendar_service.py both use Sunday as the
 first day of the week, not Monday (Python default).
 """
 import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
+import pytz
 from django.test import TestCase, override_settings
 
 
@@ -78,6 +79,20 @@ class WeekStartSundayViewsTests(TestCase):
         # They should differ
         self.assertNotEqual(old_week_start, new_week_start)
 
+    def test_formula_for_all_seven_days(self):
+        """Formula gives Sunday-start for every day of the week."""
+        # Week of Feb 22 (Sun) through Feb 28 (Sat) 2026
+        week_sunday = datetime.date(2026, 2, 22)
+        for offset in range(7):
+            today = week_sunday + datetime.timedelta(days=offset)
+            week_start = self._compute_week_start(today)
+            # week_start should always be Sunday of that week
+            self.assertEqual(
+                week_start,
+                week_sunday,
+                f"For today={today} (weekday {today.weekday()}), expected week_start={week_sunday} but got {week_start}",
+            )
+
 
 class WeekStartSundayBirthdayServiceTests(TestCase):
     """
@@ -113,14 +128,15 @@ class WeekStartSundayBirthdayServiceTests(TestCase):
         self, mock_get_tz, mock_get_svc
     ):
         """
-        When called on a Monday, get_birthdays_next_week should query
+        When called on a known Monday, get_birthdays_next_week should query
         from the previous Sunday (not Monday) through the following Saturday.
+        We verify by inspecting the timeMin / timeMax passed to events().list().
         """
-        import pytz
         from apps.calendar_bot.models import CalendarToken
+        from apps.calendar_bot import calendar_service
 
         # Set up a mock token
-        token = CalendarToken.objects.create(
+        CalendarToken.objects.create(
             phone_number='+9991234567',
             account_email='birthday@test.com',
             access_token='test_access',
@@ -128,46 +144,57 @@ class WeekStartSundayBirthdayServiceTests(TestCase):
             timezone='Asia/Jerusalem',
         )
 
-        # Freeze today to a known Monday
-        known_monday = datetime.date(2026, 2, 23)
         expected_sunday = datetime.date(2026, 2, 22)
         expected_saturday = datetime.date(2026, 2, 28)
 
         il_tz = pytz.timezone('Asia/Jerusalem')
         mock_get_tz.return_value = il_tz
 
-        # Build a mock service that returns an empty birthday calendar list
+        # Build a mock service with a birthday calendar
         mock_service = MagicMock()
         mock_service.calendarList().list().execute.return_value = {
             'items': [
                 {'id': '#contacts@group.v.calendar.google.com', 'summary': 'Birthdays'},
             ]
         }
-        mock_service.events().list().execute.return_value = {'items': []}
+        # Capture the events().list() calls so we can inspect kwargs
+        captured_list_kwargs = {}
+
+        def capture_list(**kwargs):
+            captured_list_kwargs.update(kwargs)
+            list_mock = MagicMock()
+            list_mock.execute.return_value = {'items': []}
+            return list_mock
+
+        mock_service.events().list = capture_list
         mock_get_svc.return_value = mock_service
 
-        # Patch datetime.datetime.now to return Monday
-        fake_now = il_tz.localize(datetime.datetime(2026, 2, 23, 10, 0, 0))
-        with patch('apps.calendar_bot.calendar_service.datetime') as mock_dt:
-            mock_dt.datetime.now.return_value = fake_now
-            mock_dt.datetime.fromisoformat = datetime.datetime.fromisoformat
-            mock_dt.date.fromisoformat = datetime.date.fromisoformat
-            mock_dt.timedelta = datetime.timedelta
+        # Freeze datetime.datetime.now inside calendar_service to return a Monday
+        fake_monday_naive = datetime.datetime(2026, 2, 23, 10, 0, 0)
+        fake_monday_aware = il_tz.localize(fake_monday_naive)
 
-            from apps.calendar_bot.calendar_service import get_birthdays_next_week
-            get_birthdays_next_week('+9991234567')
+        with patch.object(
+            calendar_service.datetime,
+            'datetime',
+            wraps=datetime.datetime,
+        ) as mock_datetime_cls:
+            mock_datetime_cls.now.return_value = fake_monday_aware
+            calendar_service.get_birthdays_next_week('+9991234567')
 
-        # Verify the events().list() call used the right time range
-        call_kwargs = mock_service.events().list.call_args
-        time_min_str = call_kwargs[1]['timeMin']
-        time_max_str = call_kwargs[1]['timeMax']
+        self.assertTrue(captured_list_kwargs, "events().list() was never called")
 
-        # time_min should correspond to Sunday
+        time_min_str = captured_list_kwargs['timeMin']
+        time_max_str = captured_list_kwargs['timeMax']
+
+        # Parse and check the date portion
         time_min_dt = datetime.datetime.fromisoformat(time_min_str)
-        self.assertEqual(time_min_dt.date(), expected_sunday,
-            f"Expected timeMin to be Sunday {expected_sunday}, got {time_min_dt.date()}")
-
-        # time_max should correspond to Saturday
         time_max_dt = datetime.datetime.fromisoformat(time_max_str)
-        self.assertEqual(time_max_dt.date(), expected_saturday,
-            f"Expected timeMax to be Saturday {expected_saturday}, got {time_max_dt.date()}")
+
+        self.assertEqual(
+            time_min_dt.date(), expected_sunday,
+            f"Expected timeMin to be Sunday {expected_sunday}, got {time_min_dt.date()}"
+        )
+        self.assertEqual(
+            time_max_dt.date(), expected_saturday,
+            f"Expected timeMax to be Saturday {expected_saturday}, got {time_max_dt.date()}"
+        )
