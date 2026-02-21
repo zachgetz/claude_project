@@ -21,7 +21,7 @@ class CalendarToken(models.Model):
 
 
 class CalendarEventSnapshot(models.Model):
-    phone_number = models.CharField(max_length=30)
+    phone_number = models.CharField(max_length=30, db_index=True)
     event_id = models.CharField(max_length=255)
     title = models.CharField(max_length=500)
     start_time = models.DateTimeField()  # timezone-aware
@@ -37,7 +37,7 @@ class CalendarEventSnapshot(models.Model):
 
 
 class CalendarWatchChannel(models.Model):
-    phone_number = models.CharField(max_length=30)
+    phone_number = models.CharField(max_length=30, db_index=True)
     channel_id = models.UUIDField(default=uuid.uuid4)
     resource_id = models.CharField(max_length=255, blank=True)
     expiry = models.DateTimeField(null=True, blank=True)
