@@ -86,12 +86,14 @@ def get_user_tz(phone_number):
         return pytz.UTC
 
 
-def get_events_for_date(phone_number, target_date):
+def get_events_for_date(phone_number, target_date, exclude_birthdays=False):
     """
     Fetch all-day and timed events from Google Calendar for a specific
     date (datetime.date) in the user's local timezone.
     Loops all tokens for the phone, merges events, sorts by start time.
     Returns a list of event dicts with 'start', 'summary', 'end' keys.
+    If exclude_birthdays=True, events whose summary contains 'birthday'
+    (case-insensitive) are filtered out.
     """
     logger.info(
         'get_events_for_date called: phone=%s date=%s',
@@ -173,6 +175,19 @@ def get_events_for_date(phone_number, target_date):
     # Sort: all-day events first (start=None), then by start time
     all_events.sort(key=lambda e: (e['start'] is not None, e['start'] or datetime.datetime.min.replace(tzinfo=pytz.UTC)))
 
+    if exclude_birthdays:
+        before = len(all_events)
+        all_events = [
+            e for e in all_events
+            if 'birthday' not in e['summary'].lower()
+        ]
+        logger.info(
+            'get_events_for_date excluded %d birthday events for phone=%s date=%s',
+            before - len(all_events),
+            phone_number,
+            target_date,
+        )
+
     logger.info(
         'get_events_for_date result: phone=%s date=%s events_returned=%d',
         phone_number,
@@ -180,6 +195,105 @@ def get_events_for_date(phone_number, target_date):
         len(all_events),
     )
     return all_events
+
+
+def get_birthdays_next_week(phone_number):
+    """
+    Fetch birthday events from the user's 'Birthdays' Google Calendar
+    for the next 7 days (starting from today).
+    Returns a list of dicts with 'summary' and 'date' (formatted string) keys.
+    """
+    user_tz = get_user_tz(phone_number)
+    now_local = datetime.datetime.now(tz=user_tz)
+    today = now_local.date()
+    end_date = today + datetime.timedelta(days=7)
+    time_min = user_tz.localize(
+        datetime.datetime(today.year, today.month, today.day, 0, 0, 0)
+    )
+    time_max = user_tz.localize(
+        datetime.datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59)
+    )
+
+    tokens = list(CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at'))
+    if not tokens:
+        return []
+
+    all_birthdays = []
+    seen_ids = set()
+
+    for token in tokens:
+        try:
+            service = get_calendar_service(token)
+        except Exception:
+            logger.exception(
+                'Failed to get calendar service in get_birthdays_next_week: phone=%s email=%s',
+                phone_number, token.account_email,
+            )
+            continue
+
+        try:
+            cal_list = service.calendarList().list().execute()
+        except Exception:
+            logger.exception(
+                'calendarList API error in get_birthdays_next_week: phone=%s email=%s',
+                phone_number, token.account_email,
+            )
+            continue
+
+        birthday_cal_id = None
+        for cal in cal_list.get('items', []):
+            if cal.get('summary', '').strip().lower() == 'birthdays':
+                birthday_cal_id = cal['id']
+                break
+
+        if birthday_cal_id is None:
+            logger.info(
+                'No Birthdays calendar found for phone=%s email=%s',
+                phone_number, token.account_email,
+            )
+            continue
+
+        try:
+            events_result = service.events().list(
+                calendarId=birthday_cal_id,
+                timeMin=time_min.isoformat(),
+                timeMax=time_max.isoformat(),
+                singleEvents=True,
+                orderBy='startTime',
+            ).execute()
+        except Exception:
+            logger.exception(
+                'Birthdays calendar events API error: phone=%s email=%s',
+                phone_number, token.account_email,
+            )
+            continue
+
+        for item in events_result.get('items', []):
+            event_id = item.get('id', '')
+            if event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+
+            start_raw = item.get('start', {})
+            raw_date = start_raw.get('date') or start_raw.get('dateTime', '')
+            try:
+                d = datetime.date.fromisoformat(raw_date[:10])
+                date_display = d.strftime('%a, %b %-d')
+            except (ValueError, TypeError):
+                date_display = raw_date
+
+            all_birthdays.append({
+                'summary': item.get('summary', '(No title)'),
+                'date': date_display,
+                'raw_date': raw_date,
+            })
+
+    all_birthdays.sort(key=lambda b: b.get('raw_date', ''))
+    logger.info(
+        'get_birthdays_next_week: phone=%s found=%d',
+        phone_number, len(all_birthdays),
+    )
+    return all_birthdays
 
 
 def sync_calendar_snapshot(token, send_alerts=True):
