@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 
@@ -28,3 +30,17 @@ class CalendarEventSnapshot(models.Model):
 
     def __str__(self):
         return f'CalendarEventSnapshot({self.phone_number}, {self.event_id})'
+
+
+class CalendarWatchChannel(models.Model):
+    phone_number = models.CharField(max_length=30)
+    channel_id = models.UUIDField(default=uuid.uuid4)
+    resource_id = models.CharField(max_length=255, blank=True)
+    expiry = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('phone_number', 'channel_id')]
+
+    def __str__(self):
+        return f'CalendarWatchChannel({self.phone_number}, {self.channel_id})'

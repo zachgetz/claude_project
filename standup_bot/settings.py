@@ -71,3 +71,6 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = config('TIME_ZONE', default='UTC')
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Google Calendar / Webhook
+WEBHOOK_BASE_URL = config('WEBHOOK_BASE_URL', default='https://localhost')
