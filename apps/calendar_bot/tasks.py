@@ -1,5 +1,6 @@
 import datetime
 import logging
+from collections import defaultdict
 
 import pytz
 from celery import shared_task
@@ -7,7 +8,7 @@ from django.conf import settings
 from twilio.rest import Client
 
 from .models import CalendarToken, CalendarWatchChannel
-from .calendar_service import get_calendar_service, get_user_tz
+from .calendar_service import get_events_for_date, get_user_tz
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +17,14 @@ logger = logging.getLogger(__name__)
 def send_morning_meetings_digest(self):
     """
     Send each connected user their meetings for today via WhatsApp.
-    Respects per-user digest_enabled, digest_hour/minute (in user TZ), and digest_always.
-    Registered in django-celery-beat — runs every minute; per-user time check is inside.
-    Per-user errors are logged and skipped; self.retry() is only for infrastructure failures.
+    Groups tokens by phone_number and sends ONE merged digest per phone.
+    Respects per-user digest_enabled, digest_hour/minute (from the first/primary token).
+    Registered in django-celery-beat -- runs every minute; per-user time check is inside.
     """
     logger.info('send_morning_meetings_digest task started')
 
     try:
-        tokens = list(CalendarToken.objects.filter(digest_enabled=True))
+        all_tokens = list(CalendarToken.objects.filter(digest_enabled=True).order_by('phone_number', 'created_at'))
     except Exception as exc:
         logger.exception('Failed to query CalendarToken table: %s', exc)
         raise self.retry(exc=exc)
@@ -40,34 +41,39 @@ def send_morning_meetings_digest(self):
     from_number = settings.TWILIO_WHATSAPP_NUMBER
     now_utc = datetime.datetime.now(tz=pytz.UTC)
 
+    # Group tokens by phone; first token in list is primary (earliest created_at)
+    phone_to_tokens = defaultdict(list)
+    for token in all_tokens:
+        phone_to_tokens[token.phone_number].append(token)
+
     logger.info(
-        'send_morning_meetings_digest: processing %d eligible user(s)',
-        len(tokens),
+        'send_morning_meetings_digest: processing %d phone(s)',
+        len(phone_to_tokens),
     )
 
     processed = 0
     skipped = 0
 
-    for token in tokens:
-        phone_number = token.phone_number
+    for phone_number, tokens in phone_to_tokens.items():
+        primary_token = tokens[0]  # earliest token = primary for timing/settings
         try:
-            # Check if it's now the user's configured digest time (within the current minute)
+            # Check if it's the configured digest time (in user's TZ)
             user_tz = get_user_tz(phone_number)
             now_local = now_utc.astimezone(user_tz)
-            if now_local.hour != token.digest_hour or now_local.minute != token.digest_minute:
+            if (now_local.hour != primary_token.digest_hour or
+                    now_local.minute != primary_token.digest_minute):
                 skipped += 1
                 continue
 
             logger.info(
                 'Sending digest to phone=%s (digest_time=%02d:%02d)',
                 phone_number,
-                token.digest_hour,
-                token.digest_minute,
+                primary_token.digest_hour,
+                primary_token.digest_minute,
             )
-            _send_digest_for_user(client, from_number, token)
+            _send_digest_for_phone(client, from_number, phone_number, primary_token)
             processed += 1
         except Exception:
-            # Log and continue — do NOT retry whole task for single-user failure
             logger.exception('Error sending morning digest to phone=%s', phone_number)
 
     logger.info(
@@ -77,48 +83,33 @@ def send_morning_meetings_digest(self):
     )
 
 
-def _send_digest_for_user(client, from_number, token):
-    phone_number = token.phone_number
+def _send_digest_for_phone(client, from_number, phone_number, primary_token):
+    """
+    Send a merged morning digest for all connected accounts of the given phone.
+    Uses get_events_for_date which already loops all tokens and merges events.
+    """
     user_tz = get_user_tz(phone_number)
     today = datetime.datetime.now(tz=user_tz).date()
 
-    logger.info('_send_digest_for_user: phone=%s date=%s', phone_number, today)
+    logger.info('_send_digest_for_phone: phone=%s date=%s', phone_number, today)
 
     try:
-        service = get_calendar_service(phone_number)
+        items = get_events_for_date(phone_number, today)
     except Exception as exc:
-        logger.warning('Could not get calendar service for phone=%s: %s', phone_number, exc)
+        logger.warning('Could not get events for phone=%s date=%s: %s', phone_number, today, exc)
         return
-
-    # Build timezone-aware start/end
-    day_start = datetime.datetime(today.year, today.month, today.day, 0, 0, 0).astimezone(user_tz)
-    day_end = datetime.datetime(today.year, today.month, today.day, 23, 59, 59).astimezone(user_tz)
-
-    try:
-        events_result = service.events().list(
-            calendarId='primary',
-            timeMin=day_start.isoformat(),
-            timeMax=day_end.isoformat(),
-            singleEvents=True,
-            orderBy='startTime',
-        ).execute()
-    except Exception as exc:
-        logger.warning('Calendar API error for phone=%s: %s', phone_number, exc)
-        return
-
-    items = events_result.get('items', [])
 
     logger.info(
-        '_send_digest_for_user: phone=%s date=%s events_found=%d',
+        '_send_digest_for_phone: phone=%s date=%s events_found=%d',
         phone_number,
         today,
         len(items),
     )
 
     # Skip if no meetings and user hasn't opted into always-send
-    if not items and not token.digest_always:
+    if not items and not primary_token.digest_always:
         logger.info(
-            'No meetings for phone=%s date=%s — skipping digest (digest_always=False)',
+            'No meetings for phone=%s date=%s -- skipping digest (digest_always=False)',
             phone_number,
             today,
         )
@@ -128,17 +119,9 @@ def _send_digest_for_user(client, from_number, token):
         message = 'Good morning! No meetings today \U0001f389'
     else:
         lines = ['Good morning! Your meetings today:']
-        for item in items:
-            start_raw = item.get('start', {})
-            if 'dateTime' in start_raw:
-                start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
-                if start_dt.tzinfo is None:
-                    start_dt = start_dt.astimezone(pytz.UTC)
-                start_local = start_dt.astimezone(user_tz)
-                time_str = start_local.strftime('%H:%M')
-            else:
-                time_str = 'All day'
-            summary = item.get('summary', '(No title)')
+        for ev in items:
+            time_str = ev.get('start_str', 'All day')
+            summary = ev.get('summary', '(No title)')
             lines.append(f'{time_str} {summary}')
         message = '\n'.join(lines)
 
@@ -166,7 +149,8 @@ def _send_digest_for_user(client, from_number, token):
 def renew_watch_channels(self):
     """
     Runs daily. Finds CalendarWatchChannel records expiring within 24 hours
-    and renews them by calling register_watch_channel().
+    and renews them by calling register_watch_channel(token).
+    Skips NULL-token channels (legacy/orphaned).
     """
     from .sync import register_watch_channel
 
@@ -175,13 +159,15 @@ def renew_watch_channels(self):
     now = datetime.datetime.now(tz=pytz.UTC)
     expiry_threshold = now + datetime.timedelta(hours=24)
 
-    expiring_channels = CalendarWatchChannel.objects.filter(
-        expiry__lt=expiry_threshold
+    # Only renew channels that have a valid token FK
+    expiring_channels = CalendarWatchChannel.objects.select_related('token').filter(
+        expiry__lt=expiry_threshold,
+        token__isnull=False,
     )
 
     channel_count = expiring_channels.count()
     logger.info(
-        'renew_watch_channels: found %d channel(s) expiring within 24h',
+        'renew_watch_channels: found %d channel(s) expiring within 24h (with token)',
         channel_count,
     )
 
@@ -189,17 +175,21 @@ def renew_watch_channels(self):
     failed = 0
 
     for channel in expiring_channels:
-        phone_number = channel.phone_number
+        token = channel.token
         try:
-            # register_watch_channel deletes old channels and creates a new one
-            register_watch_channel(phone_number)
+            register_watch_channel(token)
             renewed += 1
-            logger.info('Renewed watch channel for phone=%s', phone_number)
+            logger.info(
+                'Renewed watch channel for phone=%s email=%s',
+                token.phone_number,
+                token.account_email,
+            )
         except Exception as exc:
             failed += 1
             logger.exception(
-                'Failed to renew watch channel for phone=%s: %s',
-                phone_number,
+                'Failed to renew watch channel for phone=%s email=%s: %s',
+                token.phone_number,
+                token.account_email,
                 exc,
             )
             try:
