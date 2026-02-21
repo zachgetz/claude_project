@@ -1,4 +1,5 @@
 import datetime
+import logging
 import re
 import pytz
 from google.oauth2.credentials import Credentials
@@ -6,6 +7,8 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 from .models import CalendarToken, CalendarEventSnapshot
+
+logger = logging.getLogger(__name__)
 
 
 def get_calendar_service(phone_number):
@@ -291,8 +294,9 @@ def handle_block_command(phone_number, body):
             item for item in events_result.get('items', [])
             if 'dateTime' in item.get('start', {})
         ]
-    except Exception as exc:
-        return f'Could not check calendar: {exc}'
+    except Exception:
+        logger.exception('Calendar API error checking conflicts for %s', phone_number)
+        return 'Could not check your calendar right now. Please try again later.'
 
     event_data = {
         'date': target_date.isoformat(),
@@ -357,8 +361,9 @@ def confirm_block_command(phone_number):
 
     try:
         service = get_calendar_service(phone_number)
-    except Exception as exc:
-        return f'Could not connect to calendar: {exc}'
+    except Exception:
+        logger.exception('Calendar API connection error for %s', phone_number)
+        return 'Could not connect to your calendar right now. Please try again later.'
 
     return _create_calendar_block(phone_number, service, start_dt_local, end_dt_local, title, user_tz)
 
@@ -376,8 +381,9 @@ def _create_calendar_block(phone_number, service, start_dt_local, end_dt_local, 
     }
     try:
         created = service.events().insert(calendarId='primary', body=event_body).execute()
-    except Exception as exc:
-        return f'Failed to create event: {exc}'
+    except Exception:
+        logger.exception('Calendar API error creating event for %s', phone_number)
+        return 'Could not create the event right now. Please try again later.'
 
     time_str = f'{start_dt_local.strftime("%H:%M")}-{end_dt_local.strftime("%H:%M")}'
     date_str = start_dt_local.strftime('%A, %b %d')
