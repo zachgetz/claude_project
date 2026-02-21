@@ -16,9 +16,21 @@ def register_watch_channel(token):
     Calls events.watch() on Google Calendar API for the given CalendarToken.
     Deletes only THIS token's existing channels before registering a new one.
     Stores channel_id, resource_id, expiry, and the token FK in CalendarWatchChannel.
-    Returns the new CalendarWatchChannel instance.
+    Returns the new CalendarWatchChannel instance, or None if WEBHOOK_BASE_URL is not set.
     """
     from .models import CalendarWatchChannel
+
+    # Guard: refuse to register if WEBHOOK_BASE_URL is not configured.
+    # Google requires a public HTTPS URL; without it the watch channel would
+    # be silently misconfigured and no push notifications would arrive.
+    if not getattr(settings, 'WEBHOOK_BASE_URL', None):
+        logger.error(
+            'WEBHOOK_BASE_URL is not configured — skipping watch channel registration '
+            'for phone=%s email=%s',
+            token.phone_number,
+            token.account_email,
+        )
+        return None
 
     phone_number = token.phone_number
     logger.info(
@@ -39,7 +51,7 @@ def register_watch_channel(token):
 
     service = get_calendar_service(token)
 
-    webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', 'https://localhost')
+    webhook_base_url = settings.WEBHOOK_BASE_URL
     notification_url = webhook_base_url.rstrip('/') + '/calendar/notifications/'
 
     # Create a new channel record (save to get channel_id UUID assigned)
