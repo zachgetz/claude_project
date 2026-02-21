@@ -25,8 +25,26 @@ MENU_TEXT = (
     "4. Next meeting\n"
     "5. Free time today\n"
     "6. Help\n"
+    "7. Set timezone\n"
     "\n"
     "Send 0 or 'menu' anytime to return here."
+)
+
+TIMEZONE_SHORTCUTS = {
+    'jerusalem': 'Asia/Jerusalem',
+    'tel aviv': 'Asia/Jerusalem',
+    'london': 'Europe/London',
+    'nyc': 'America/New_York',
+    'new york': 'America/New_York',
+}
+
+TIMEZONE_SUB_MENU = (
+    "\U0001f550 Set your timezone. Reply with your city:\n"
+    "\u2022 Jerusalem\n"
+    "\u2022 London\n"
+    "\u2022 New York\n"
+    "\n"
+    "Or type: set timezone Europe/Paris (for other cities)"
 )
 
 WORKDAY_START_HOUR = 8
@@ -96,8 +114,8 @@ class WhatsAppWebhookView(APIView):
             logger.info('Routing to menu handler: phone=%s', from_number)
             return self._handle_menu()
 
-        # Handle digit shortcuts 1-6
-        if body.strip() in {'1', '2', '3', '4', '5', '6'}:
+        # Handle digit shortcuts 1-7
+        if body.strip() in {'1', '2', '3', '4', '5', '6', '7'}:
             logger.info('Routing digit %s for phone=%s', body.strip(), from_number)
             return self._handle_menu_digit(request, from_number, body.strip())
 
@@ -115,6 +133,12 @@ class WhatsAppWebhookView(APIView):
         if body_lower.startswith('remove calendar'):
             logger.info('Routing to remove_calendar handler: phone=%s', from_number)
             return self._handle_remove_calendar(from_number, body_lower)
+
+        # Handle timezone city shortcuts (Jerusalem, London, NYC, New York)
+        if body_lower in TIMEZONE_SHORTCUTS:
+            tz_name = TIMEZONE_SHORTCUTS[body_lower]
+            logger.info('Routing to timezone shortcut: phone=%s tz=%s', from_number, tz_name)
+            return self._handle_set_timezone(from_number, f'set timezone {tz_name}')
 
         # Handle set timezone command
         if body_lower.startswith('set timezone '):
@@ -265,7 +289,7 @@ class WhatsAppWebhookView(APIView):
 
         if token is None or not token.access_token:
             logger.warning(
-                'Block command requested but no calendar connected: phone=%s',
+                 'Block command requested but no calendar connected: phone=%s',
                 from_number,
             )
             response = MessagingResponse()
@@ -309,6 +333,11 @@ class WhatsAppWebhookView(APIView):
         response.message(MENU_TEXT)
         return HttpResponse(str(response), content_type='application/xml')
 
+    def _handle_timezone_menu(self):
+        response = MessagingResponse()
+        response.message(TIMEZONE_SUB_MENU)
+        return HttpResponse(str(response), content_type='application/xml')
+
     def _handle_menu_digit(self, request, from_number, digit):
         digit_map = {
             '1': 'today',
@@ -317,11 +346,15 @@ class WhatsAppWebhookView(APIView):
             '4': 'next',
             '5': 'free today',
             '6': 'help',
+            '7': 'timezone',
         }
         body_lower = digit_map[digit]
 
         if body_lower == 'help':
             return self._handle_help()
+
+        if body_lower == 'timezone':
+            return self._handle_timezone_menu()
 
         # Calendar queries require a connected account
         from apps.calendar_bot.models import CalendarToken
@@ -381,7 +414,7 @@ class WhatsAppWebhookView(APIView):
         response.message(_UNRECOGNIZED_HINT)
         return HttpResponse(str(response), content_type='application/xml')
 
-    # keep for backwards-compat (used nowhere else now, but harmless)
+    # keep for backwards-compat
     def _maybe_onboarding(self, request, from_number):
         return self._handle_unrecognized(request, from_number)
 
@@ -406,11 +439,10 @@ class WhatsAppWebhookView(APIView):
 
         response = MessagingResponse()
 
-        # Check today first, then tomorrow, then up to 7 days out
         for days_offset in range(8):
             check_date = today + datetime.timedelta(days=days_offset)
             try:
-                events = get_events_for_date(from_number, check_date)
+                events = get_events_for_date(from_number, check_date, exclude_birthdays=True)
             except Exception:
                 logger.exception(
                     'Calendar API error fetching next meeting for phone=%s date=%s',
@@ -420,11 +452,10 @@ class WhatsAppWebhookView(APIView):
                 events = []
 
             for ev in events:
-                if ev['start'] is None:  # all-day event -- skip for next meeting
+                if ev['start'] is None:
                     continue
                 event_dt = ev['start']
                 if event_dt > now_local:
-                    # Found the next meeting
                     time_until = event_dt - now_local
                     minutes_until = int(time_until.total_seconds() / 60)
 
@@ -480,14 +511,13 @@ class WhatsAppWebhookView(APIView):
         logger.info('Calculating free slots for phone=%s date=%s', from_number, today)
 
         try:
-            events = get_events_for_date(from_number, today)
+            events = get_events_for_date(from_number, today, exclude_birthdays=True)
         except Exception:
             logger.exception('Calendar API error fetching events for phone=%s date=%s', from_number, today)
             response = MessagingResponse()
             response.message('Could not fetch your calendar right now. Please try again later.')
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Filter to timed events only, within working hours
         timed_events = [ev for ev in events if ev['start'] is not None]
 
         work_start = user_tz.localize(
@@ -504,7 +534,6 @@ class WhatsAppWebhookView(APIView):
             response.message("You're completely free today.")
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Build list of (start, end) for events that overlap working hours
         busy = []
         for ev in timed_events:
             ev_start = ev['start']
@@ -515,14 +544,12 @@ class WhatsAppWebhookView(APIView):
                 except (ValueError, TypeError):
                     ev_end = ev_start + datetime.timedelta(hours=1)
             else:
-                ev_end = ev_start + datetime.timedelta(hours=1)  # fallback only
-            # Clip to working hours
+                ev_end = ev_start + datetime.timedelta(hours=1)
             clipped_start = max(ev_start, work_start)
             clipped_end = min(ev_end, work_end)
             if clipped_start < clipped_end:
                 busy.append((clipped_start, clipped_end))
 
-        # Merge overlapping busy slots
         busy.sort(key=lambda x: x[0])
         merged = []
         for start, end in busy:
@@ -531,7 +558,6 @@ class WhatsAppWebhookView(APIView):
             else:
                 merged.append((start, end))
 
-        # Find free slots
         free_slots = []
         cursor = work_start
         for busy_start, busy_end in merged:
@@ -541,7 +567,6 @@ class WhatsAppWebhookView(APIView):
                     free_slots.append((cursor, busy_start, slot_minutes))
             cursor = max(cursor, busy_end)
 
-        # Check after last event
         if cursor < work_end:
             slot_minutes = int((work_end - cursor).total_seconds() / 60)
             if slot_minutes >= MIN_FREE_SLOT_MINUTES:
@@ -579,7 +604,7 @@ class WhatsAppWebhookView(APIView):
     # Day query handling
     # ------------------------------------------------------------------ #
 
-    def _try_day_query(self, from_number, body_lower):
+    def _try_day_query(self, from_number, body_lower, exclude_birthdays=False):
         """Returns an HttpResponse if the message is a calendar day query, else None."""
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
         from apps.calendar_bot.query_helpers import resolve_day, format_events_for_day, format_week_view
@@ -600,11 +625,12 @@ class WhatsAppWebhookView(APIView):
             return None
 
         logger.info(
-            'Day query: phone=%s body=%.50r resolved_target=%s label=%r',
+            'Day query: phone=%s body=%.50r resolved_target=%s label=%r exclude_birthdays=%s',
             from_number,
             body_lower,
             target,
             label,
+            exclude_birthdays,
         )
 
         response = MessagingResponse()
@@ -616,7 +642,7 @@ class WhatsAppWebhookView(APIView):
             current = week_start
             while current <= week_end:
                 try:
-                    evs = get_events_for_date(from_number, current)
+                    evs = get_events_for_date(from_number, current, exclude_birthdays=exclude_birthdays)
                 except Exception:
                     logger.exception(
                         'Calendar API error for week view: phone=%s date=%s',
@@ -629,7 +655,7 @@ class WhatsAppWebhookView(APIView):
             msg = format_week_view(week_events, week_start, week_end)
         else:
             try:
-                events = get_events_for_date(from_number, target)
+                events = get_events_for_date(from_number, target, exclude_birthdays=exclude_birthdays)
             except Exception:
                 logger.exception(
                     'Calendar API error for day query: phone=%s date=%s',
@@ -656,7 +682,6 @@ class WhatsAppWebhookView(APIView):
     def _handle_set_digest(self, from_number, body_lower):
         from apps.calendar_bot.models import CalendarToken
 
-        # Ensure at least one token row exists for settings-only users
         if not CalendarToken.objects.filter(phone_number=from_number).exists():
             CalendarToken.objects.create(
                 phone_number=from_number,
@@ -727,7 +752,6 @@ class WhatsAppWebhookView(APIView):
             )
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Ensure at least one token row exists
         if not CalendarToken.objects.filter(phone_number=from_number).exists():
             CalendarToken.objects.create(
                 phone_number=from_number,
@@ -736,7 +760,6 @@ class WhatsAppWebhookView(APIView):
                 refresh_token='',
             )
 
-        # Update ALL tokens for this phone to the same timezone
         CalendarToken.objects.filter(phone_number=from_number).update(timezone=tz_name)
 
         logger.info('Timezone set to %s for phone=%s', tz_name, from_number)
