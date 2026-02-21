@@ -88,12 +88,11 @@ def get_user_tz(phone_number):
 
 def get_events_for_date(phone_number, target_date, exclude_birthdays=False):
     """
-    Fetch all-day and timed events from Google Calendar for a specific
+    Fetch timed events (not all-day) from Google Calendar for a specific
     date (datetime.date) in the user's local timezone.
+    All-day events (birthdays, holidays, etc.) are always skipped.
     Loops all tokens for the phone, merges events, sorts by start time.
     Returns a list of event dicts with 'start', 'summary', 'end' keys.
-    If exclude_birthdays=True, events whose summary contains 'birthday'
-    (case-insensitive) are filtered out.
     """
     logger.info(
         'get_events_for_date called: phone=%s date=%s',
@@ -149,44 +148,24 @@ def get_events_for_date(phone_number, target_date, exclude_birthdays=False):
         for item in events_result.get('items', []):
             start_raw = item.get('start', {})
             end_raw = item.get('end', {})
-            # timed event
-            if 'dateTime' in start_raw:
-                start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
-                if start_dt.tzinfo is None:
-                    start_dt = pytz.UTC.localize(start_dt)
-                start_local = start_dt.astimezone(user_tz)
-                all_events.append({
-                    'start': start_local,
-                    'start_str': start_local.strftime('%H:%M'),
-                    'summary': item.get('summary', '(No title)'),
-                    'end': end_raw.get('dateTime', end_raw.get('date')),
-                    'raw': item,
-                })
-            else:
-                # all-day event
-                all_events.append({
-                    'start': None,
-                    'start_str': 'All day',
-                    'summary': item.get('summary', '(No title)'),
-                    'end': end_raw.get('date'),
-                    'raw': item,
-                })
 
-    # Sort: all-day events first (start=None), then by start time
-    all_events.sort(key=lambda e: (e['start'] is not None, e['start'] or datetime.datetime.min.replace(tzinfo=pytz.UTC)))
+            # Skip all-day events (birthdays, holidays, etc.) — they have 'date' not 'dateTime'
+            if 'dateTime' not in start_raw:
+                continue
 
-    if exclude_birthdays:
-        before = len(all_events)
-        all_events = [
-            e for e in all_events
-            if 'birthday' not in e['summary'].lower()
-        ]
-        logger.info(
-            'get_events_for_date excluded %d birthday events for phone=%s date=%s',
-            before - len(all_events),
-            phone_number,
-            target_date,
-        )
+            start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
+            if start_dt.tzinfo is None:
+                start_dt = pytz.UTC.localize(start_dt)
+            start_local = start_dt.astimezone(user_tz)
+            all_events.append({
+                'start': start_local,
+                'start_str': start_local.strftime('%H:%M'),
+                'summary': item.get('summary', '(No title)'),
+                'end': end_raw.get('dateTime', end_raw.get('date')),
+                'raw': item,
+            })
+
+    all_events.sort(key=lambda e: e['start'])
 
     logger.info(
         'get_events_for_date result: phone=%s date=%s events_returned=%d',
