@@ -182,6 +182,16 @@ class WhatsAppWebhookView(APIView):
         if day_result is not None:
             return day_result
 
+        # Handle name collection during onboarding (awaiting_name step)
+        from apps.calendar_bot.models import OnboardingState
+        try:
+            onboarding = OnboardingState.objects.get(phone_number=from_number)
+            if onboarding.step == OnboardingState.STEP_AWAITING_NAME:
+                logger.info('Collecting name during onboarding: phone=%s', from_number)
+                return self._handle_name_collection(request, from_number, body.strip())
+        except OnboardingState.DoesNotExist:
+            pass
+
         if not body.strip():
             logger.warning('Received empty body from phone=%s', from_number)
             return Response({'error': 'Body cannot be empty.'}, status=400)
@@ -407,10 +417,11 @@ class WhatsAppWebhookView(APIView):
     def _handle_unrecognized(self, request, from_number):
         """
         Unrecognized message handler:
-        - No calendar connected -> onboarding message with connect link
-        - Calendar connected    -> short hint to use the menu
+        - No calendar connected + no OnboardingState → start onboarding (ask name)
+        - No calendar connected + OnboardingState awaiting_name → re-prompt for name
+        - Calendar connected → short hint to use the menu
         """
-        from apps.calendar_bot.models import CalendarToken
+        from apps.calendar_bot.models import CalendarToken, OnboardingState
 
         token = CalendarToken.objects.filter(
             phone_number=from_number
@@ -418,36 +429,81 @@ class WhatsAppWebhookView(APIView):
         has_calendar = bool(token and token.access_token)
 
         if not has_calendar:
-            logger.info('Sending onboarding message to unconfigured user: phone=%s', from_number)
-            webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', '')
-            if webhook_base_url:
-                auth_url = webhook_base_url.rstrip('/') + f'/calendar/auth/start/?phone={from_number}'
-            else:
-                auth_url = request.build_absolute_uri(
-                    f'/calendar/auth/start/?phone={from_number}'
-                )
-            onboarding_text = (
-                "\U0001f44b Hi! I'm your WhatsApp calendar assistant \U0001f916\n"
-                "\n"
-                "To get started, connect your Google Calendar:\n"
-                f"{auth_url}\n"
-                "\n"
-                "Once connected, send *0* or *menu* to see what I can do."
-            )
+            # Check if already mid-onboarding
+            onboarding = OnboardingState.objects.filter(phone_number=from_number).first()
+            if onboarding and onboarding.step == OnboardingState.STEP_AWAITING_NAME:
+                # Re-prompt — user sent something other than their name
+                logger.info('Re-prompting for name during onboarding: phone=%s', from_number)
+                response = MessagingResponse()
+                response.message("\U0001f914 I didn't catch that — what's your name?")
+                return HttpResponse(str(response), content_type='application/xml')
+
+            # First contact — start onboarding, ask for name
+            logger.info('First contact — starting onboarding, asking name: phone=%s', from_number)
+            OnboardingState.objects.get_or_create(phone_number=from_number)
             response = MessagingResponse()
-            response.message(onboarding_text)
+            response.message(
+                "\U0001f44b Hi! I'm your WhatsApp calendar assistant \U0001f916\n\n"
+                "What's your name?"
+            )
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Connected user sent something unrecognised -> brief hint only
+        # Connected user sent something unrecognised → brief hint only
         logger.info('Connected user sent unrecognized message, sending hint: phone=%s', from_number)
         s = self._get_strings(from_number)
         response = MessagingResponse()
         response.message(s.UNRECOGNIZED_HINT)
         return HttpResponse(str(response), content_type='application/xml')
 
-    # keep for backwards-compat
-    def _maybe_onboarding(self, request, from_number):
-        return self._handle_unrecognized(request, from_number)
+    def _handle_name_collection(self, request, from_number, name):
+        """
+        Called when user replies with their name during onboarding.
+        Stores the name, deletes OnboardingState, sends welcome + OAuth link.
+        """
+        from apps.calendar_bot.models import CalendarToken, OnboardingState
+
+        # Sanitise name — take first 100 chars, strip whitespace
+        name = name.strip()[:100]
+        if not name:
+            response = MessagingResponse()
+            response.message("\U0001f914 I didn't catch that — what's your name?")
+            return HttpResponse(str(response), content_type='application/xml')
+
+        # Save name on CalendarToken (create a shell token if needed)
+        token, _ = CalendarToken.objects.get_or_create(
+            phone_number=from_number,
+            defaults={
+                'account_email': '',
+                'access_token': '',
+                'refresh_token': '',
+                'name': name,
+            },
+        )
+        if not token.name:
+            token.name = name
+            token.save(update_fields=['name'])
+
+        # Delete the onboarding state
+        OnboardingState.objects.filter(phone_number=from_number).delete()
+
+        logger.info('Name collected and saved: phone=%s name=%r', from_number, name)
+
+        # Build OAuth link
+        webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', '')
+        if webhook_base_url:
+            auth_url = webhook_base_url.rstrip('/') + f'/calendar/auth/start/?phone={from_number}'
+        else:
+            auth_url = request.build_absolute_uri(f'/calendar/auth/start/?phone={from_number}')
+
+        response = MessagingResponse()
+        response.message(
+            f"\U0001f91d Nice to meet you, {name}!\n\n"
+            f"To get started, connect your Google Calendar:\n"
+            f"{auth_url}\n\n"
+            f"\u26a0\ufe0f Google may show a safety warning. "
+            f"Tap 'Advanced' \u2192 'Go to app (unsafe)' to continue."
+        )
+        return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
     # Instant queries
