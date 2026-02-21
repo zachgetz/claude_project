@@ -15,7 +15,7 @@ NEXT_MEETING_TRIGGERS = {'next meeting', 'next', "what's next", 'whats next'}
 FREE_TODAY_TRIGGERS = {'free today', 'am i free', 'free time', 'when am i free'}
 HELP_TRIGGERS = {'help', '?', '/help'}
 
-MENU_TRIGGERS = {'menu', 'options', 'calendar'}
+MENU_TRIGGERS = {'menu', 'options', 'calendar', '0'}
 
 MENU_TEXT = (
     "\U0001f4c5 Calendar menu:\n"
@@ -24,7 +24,9 @@ MENU_TEXT = (
     "3. This week\n"
     "4. Next meeting\n"
     "5. Free time today\n"
-    "6. Help"
+    "6. Help\n"
+    "\n"
+    "Send 0 or 'menu' anytime to return here."
 )
 
 WORKDAY_START_HOUR = 8
@@ -57,8 +59,11 @@ HELP_TEXT = (
     '\u2022 "set digest off" \u2014 turn off morning digest\n'
     '\u2022 "set timezone Europe/London" \u2014 set your timezone\n'
     "\n"
-    "I'll also alert you when meetings are rescheduled or cancelled."
+    "Send 0 or 'menu' to see the quick menu."
 )
+
+# Short hint shown when a connected user sends something unrecognised
+_UNRECOGNIZED_HINT = "Didn't understand that. Send *0* for the menu."
 
 
 class WhatsAppWebhookView(APIView):
@@ -86,7 +91,7 @@ class WhatsAppWebhookView(APIView):
             logger.info('Routing to help handler: phone=%s', from_number)
             return self._handle_help()
 
-        # Handle menu
+        # Handle menu (including '0' shortcut)
         if body_lower in MENU_TRIGGERS:
             logger.info('Routing to menu handler: phone=%s', from_number)
             return self._handle_menu()
@@ -94,7 +99,7 @@ class WhatsAppWebhookView(APIView):
         # Handle digit shortcuts 1-6
         if body.strip() in {'1', '2', '3', '4', '5', '6'}:
             logger.info('Routing digit %s for phone=%s', body.strip(), from_number)
-            return self._handle_menu_digit(from_number, body.strip())
+            return self._handle_menu_digit(request, from_number, body.strip())
 
         # Handle connect calendar / add calendar
         if body_lower in ('connect calendar', 'add calendar'):
@@ -156,13 +161,13 @@ class WhatsAppWebhookView(APIView):
             logger.warning('Received empty body from phone=%s', from_number)
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
-        # --- Fallthrough: unrecognized message → menu or onboarding ---
+        # --- Fallthrough: unrecognized message ---
         logger.info(
-            'Unrecognized message, routing to onboarding/menu: phone=%s body=%.50r',
+            'Unrecognized message, routing to onboarding/hint: phone=%s body=%.50r',
             from_number,
             body,
         )
-        return self._maybe_onboarding(request, from_number)
+        return self._handle_unrecognized(request, from_number)
 
     # ------------------------------------------------------------------ #
     # Multi-account calendar commands
@@ -290,7 +295,7 @@ class WhatsAppWebhookView(APIView):
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
-    # Help and onboarding
+    # Help, menu and onboarding
     # ------------------------------------------------------------------ #
 
     def _handle_help(self):
@@ -303,7 +308,7 @@ class WhatsAppWebhookView(APIView):
         response.message(MENU_TEXT)
         return HttpResponse(str(response), content_type='application/xml')
 
-    def _handle_menu_digit(self, from_number, digit):
+    def _handle_menu_digit(self, request, from_number, digit):
         digit_map = {
             '1': 'today',
             '2': 'tomorrow',
@@ -313,8 +318,18 @@ class WhatsAppWebhookView(APIView):
             '6': 'help',
         }
         body_lower = digit_map[digit]
+
         if body_lower == 'help':
             return self._handle_help()
+
+        # Calendar queries require a connected account
+        from apps.calendar_bot.models import CalendarToken
+        token = CalendarToken.objects.filter(
+            phone_number=from_number
+        ).order_by('created_at').first()
+        if token is None or not token.access_token:
+            return self._handle_connect_calendar(request, from_number)
+
         if body_lower == 'next':
             result = self._try_next_meeting(from_number)
             return result if result is not None else self._handle_menu()
@@ -325,10 +340,11 @@ class WhatsAppWebhookView(APIView):
         result = self._try_day_query(from_number, body_lower)
         return result if result is not None else self._handle_menu()
 
-    def _maybe_onboarding(self, request, from_number):
+    def _handle_unrecognized(self, request, from_number):
         """
-        If the user has NO CalendarToken, send onboarding message with connect link.
-        If the user IS connected, show the numbered menu.
+        Unrecognized message handler:
+        - No calendar connected → onboarding message with connect link
+        - Calendar connected    → short hint to use the menu
         """
         from apps.calendar_bot.models import CalendarToken
 
@@ -352,16 +368,21 @@ class WhatsAppWebhookView(APIView):
                 "To get started, connect your Google Calendar:\n"
                 f"{auth_url}\n"
                 "\n"
-                "Once connected, I'll send your daily briefing and answer "
-                "questions about your schedule."
+                "Once connected, send *0* or *menu* to see what I can do."
             )
             response = MessagingResponse()
             response.message(onboarding_text)
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Connected user with unrecognized message → show menu
-        logger.info('Connected user sent unrecognized message, showing menu: phone=%s', from_number)
-        return self._handle_menu()
+        # Connected user sent something unrecognised → brief hint only
+        logger.info('Connected user sent unrecognized message, sending hint: phone=%s', from_number)
+        response = MessagingResponse()
+        response.message(_UNRECOGNIZED_HINT)
+        return HttpResponse(str(response), content_type='application/xml')
+
+    # keep for backwards-compat (used nowhere else now, but harmless)
+    def _maybe_onboarding(self, request, from_number):
+        return self._handle_unrecognized(request, from_number)
 
     # ------------------------------------------------------------------ #
     # Instant queries
