@@ -6,195 +6,181 @@ birthday week range in calendar_service.py both use Sunday as the
 first day of the week, not Monday (Python default).
 """
 import datetime
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import pytz
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
+
+# ---------------------------------------------------------------------------
+# Helper: mirror the Sunday-start formula used in the production code
+# ---------------------------------------------------------------------------
+
+def _week_start_sunday(today):
+    """Return the Sunday that begins today's Israeli calendar week."""
+    return today - datetime.timedelta(days=(today.weekday() + 1) % 7)
+
+
+# ---------------------------------------------------------------------------
+# views.py — _try_day_query week_start formula
+# ---------------------------------------------------------------------------
 
 class WeekStartSundayViewsTests(TestCase):
     """
-    Tests that _try_day_query uses Sunday as the first day of the week.
-
-    We test the week_start calculation logic independently by verifying
-    the formula (today.weekday() + 1) % 7 for various days of the week.
+    Tests that the Sunday-start formula used in _try_day_query is correct
+    for every day of the week.
     """
-
-    def _compute_week_start(self, today):
-        """Mirror the formula used in _try_day_query."""
-        return today - datetime.timedelta(days=(today.weekday() + 1) % 7)
 
     def test_week_start_on_sunday_is_same_day(self):
         """When today is Sunday, week_start should be today itself."""
-        # Sunday in Python: weekday() == 6
-        sunday = datetime.date(2026, 2, 22)  # a Sunday
+        sunday = datetime.date(2026, 2, 22)          # known Sunday
         self.assertEqual(sunday.weekday(), 6)
-        week_start = self._compute_week_start(sunday)
-        self.assertEqual(week_start, sunday)
+        self.assertEqual(_week_start_sunday(sunday), sunday)
 
     def test_week_start_on_monday_is_previous_sunday(self):
-        """When today is Monday, week_start should be the previous Sunday."""
-        monday = datetime.date(2026, 2, 23)  # a Monday
+        monday = datetime.date(2026, 2, 23)
         self.assertEqual(monday.weekday(), 0)
-        week_start = self._compute_week_start(monday)
-        expected_sunday = datetime.date(2026, 2, 22)
-        self.assertEqual(week_start, expected_sunday)
+        self.assertEqual(_week_start_sunday(monday), datetime.date(2026, 2, 22))
 
     def test_week_start_on_tuesday_is_previous_sunday(self):
-        """When today is Tuesday, week_start should be the previous Sunday."""
         tuesday = datetime.date(2026, 2, 24)
         self.assertEqual(tuesday.weekday(), 1)
-        week_start = self._compute_week_start(tuesday)
-        expected_sunday = datetime.date(2026, 2, 22)
-        self.assertEqual(week_start, expected_sunday)
+        self.assertEqual(_week_start_sunday(tuesday), datetime.date(2026, 2, 22))
+
+    def test_week_start_on_wednesday_is_previous_sunday(self):
+        wednesday = datetime.date(2026, 2, 25)
+        self.assertEqual(wednesday.weekday(), 2)
+        self.assertEqual(_week_start_sunday(wednesday), datetime.date(2026, 2, 22))
+
+    def test_week_start_on_thursday_is_previous_sunday(self):
+        thursday = datetime.date(2026, 2, 26)
+        self.assertEqual(thursday.weekday(), 3)
+        self.assertEqual(_week_start_sunday(thursday), datetime.date(2026, 2, 22))
+
+    def test_week_start_on_friday_is_previous_sunday(self):
+        friday = datetime.date(2026, 2, 27)
+        self.assertEqual(friday.weekday(), 4)
+        self.assertEqual(_week_start_sunday(friday), datetime.date(2026, 2, 22))
 
     def test_week_start_on_saturday_is_previous_sunday(self):
-        """When today is Saturday, week_start should be 6 days before."""
         saturday = datetime.date(2026, 2, 28)
         self.assertEqual(saturday.weekday(), 5)
-        week_start = self._compute_week_start(saturday)
-        expected_sunday = datetime.date(2026, 2, 22)
-        self.assertEqual(week_start, expected_sunday)
+        self.assertEqual(_week_start_sunday(saturday), datetime.date(2026, 2, 22))
 
     def test_week_end_is_saturday(self):
-        """The week should end on Saturday (6 days after Sunday start)."""
+        """week_start + 6 days is always Saturday."""
         sunday = datetime.date(2026, 2, 22)
-        week_start = self._compute_week_start(sunday)
+        week_start = _week_start_sunday(sunday)
         week_end = week_start + datetime.timedelta(days=6)
-        expected_saturday = datetime.date(2026, 2, 28)
-        self.assertEqual(week_end, expected_saturday)
-        # Confirm it's a Saturday (weekday 5)
-        self.assertEqual(week_end.weekday(), 5)
+        self.assertEqual(week_end, datetime.date(2026, 2, 28))
+        self.assertEqual(week_end.weekday(), 5)      # Saturday
 
-    def test_old_formula_gives_monday_start(self):
-        """Regression: old formula (today.weekday()) gives Monday start, not Sunday."""
+    def test_old_formula_would_give_monday_not_sunday(self):
+        """Regression guard: the old formula gives Monday start, not Sunday."""
         monday = datetime.date(2026, 2, 23)
-        # Old formula
         old_week_start = monday - datetime.timedelta(days=monday.weekday())
-        # New formula
-        new_week_start = self._compute_week_start(monday)
-        # Old formula gives Monday, new gives Sunday
-        self.assertEqual(old_week_start.weekday(), 0)   # Monday
-        self.assertEqual(new_week_start.weekday(), 6)   # Sunday
-        # They should differ
+        new_week_start = _week_start_sunday(monday)
+        self.assertEqual(old_week_start.weekday(), 0)    # Monday
+        self.assertEqual(new_week_start.weekday(), 6)    # Sunday
         self.assertNotEqual(old_week_start, new_week_start)
 
-    def test_formula_for_all_seven_days(self):
-        """Formula gives Sunday-start for every day of the week."""
-        # Week of Feb 22 (Sun) through Feb 28 (Sat) 2026
-        week_sunday = datetime.date(2026, 2, 22)
-        for offset in range(7):
-            today = week_sunday + datetime.timedelta(days=offset)
-            week_start = self._compute_week_start(today)
-            # week_start should always be Sunday of that week
-            self.assertEqual(
-                week_start,
-                week_sunday,
-                f"For today={today} (weekday {today.weekday()}), expected week_start={week_sunday} but got {week_start}",
-            )
 
+# ---------------------------------------------------------------------------
+# calendar_service.py — get_birthdays_next_week week_start formula
+# ---------------------------------------------------------------------------
 
 class WeekStartSundayBirthdayServiceTests(TestCase):
     """
-    Tests that get_birthdays_next_week uses Sunday as the first day of the week.
+    Tests that the Sunday-start formula used in get_birthdays_next_week
+    is correct, verified against the same helper.
     """
 
-    def _compute_week_start(self, today):
-        """Mirror the formula used in get_birthdays_next_week."""
-        return today - datetime.timedelta(days=(today.weekday() + 1) % 7)
-
-    def test_birthday_week_starts_on_sunday(self):
-        """When called on a Wednesday, birthday week should start from the previous Sunday."""
+    def test_birthday_week_starts_on_sunday_from_wednesday(self):
         wednesday = datetime.date(2026, 2, 25)
-        self.assertEqual(wednesday.weekday(), 2)
-        week_start = self._compute_week_start(wednesday)
-        expected_sunday = datetime.date(2026, 2, 22)
-        self.assertEqual(week_start, expected_sunday)
+        self.assertEqual(_week_start_sunday(wednesday), datetime.date(2026, 2, 22))
 
-    def test_birthday_week_ends_on_saturday(self):
-        """Birthday week should always end on Saturday."""
-        for day_offset in range(7):
-            today = datetime.date(2026, 2, 22) + datetime.timedelta(days=day_offset)
-            week_start = self._compute_week_start(today)
+    def test_birthday_week_ends_on_saturday_every_day(self):
+        """For every day of a full week, week_end is always Saturday."""
+        week_sunday = datetime.date(2026, 2, 22)
+        for offset in range(7):
+            today = week_sunday + datetime.timedelta(days=offset)
+            week_start = _week_start_sunday(today)
             week_end = week_start + datetime.timedelta(days=6)
             self.assertEqual(
                 week_end.weekday(), 5,
-                f"Expected week_end to be Saturday for today={today}, got {week_end} (weekday {week_end.weekday()})"
+                f"today={today} gave week_end={week_end} (weekday {week_end.weekday()}, expected 5=Sat)",
             )
+
+    def test_birthday_formula_same_across_month_boundary(self):
+        """Formula works correctly across a month boundary."""
+        # Week of Feb 28 (Sat) / Mar 1 (Sun) 2026
+        saturday_feb = datetime.date(2026, 2, 28)
+        sunday_mar = datetime.date(2026, 3, 1)
+        self.assertEqual(_week_start_sunday(saturday_feb), datetime.date(2026, 2, 22))
+        self.assertEqual(_week_start_sunday(sunday_mar), datetime.date(2026, 3, 1))
 
     @patch('apps.calendar_bot.calendar_service.get_calendar_service')
     @patch('apps.calendar_bot.calendar_service.get_user_tz')
-    def test_get_birthdays_next_week_queries_sunday_to_saturday(
+    def test_get_birthdays_uses_sunday_based_week(
         self, mock_get_tz, mock_get_svc
     ):
         """
-        When called on a known Monday, get_birthdays_next_week should query
-        from the previous Sunday (not Monday) through the following Saturday.
-        We verify by inspecting the timeMin / timeMax passed to events().list().
+        Integration smoke-test: get_birthdays_next_week should use the week
+        range [sunday, saturday] from the user's current date.
+
+        We verify by computing the expected week range manually for today
+        and asserting the API call's timeMin/timeMax match that range.
         """
         from apps.calendar_bot.models import CalendarToken
-        from apps.calendar_bot import calendar_service
+        from apps.calendar_bot.calendar_service import get_birthdays_next_week
 
-        # Set up a mock token
         CalendarToken.objects.create(
-            phone_number='+9991234567',
-            account_email='birthday@test.com',
-            access_token='test_access',
-            refresh_token='test_refresh',
+            phone_number='+9991234568',
+            account_email='bday@test.com',
+            access_token='acc',
+            refresh_token='ref',
             timezone='Asia/Jerusalem',
         )
-
-        expected_sunday = datetime.date(2026, 2, 22)
-        expected_saturday = datetime.date(2026, 2, 28)
 
         il_tz = pytz.timezone('Asia/Jerusalem')
         mock_get_tz.return_value = il_tz
 
-        # Build a mock service with a birthday calendar
+        # Compute what the expected week range should be for the real "today"
+        today_local = datetime.datetime.now(tz=il_tz).date()
+        expected_week_start = _week_start_sunday(today_local)
+        expected_week_end = expected_week_start + datetime.timedelta(days=6)
+
+        # Capture events().list() kwargs
+        captured = {}
+
+        def capturing_list(**kwargs):
+            captured.update(kwargs)
+            m = MagicMock()
+            m.execute.return_value = {'items': []}
+            return m
+
         mock_service = MagicMock()
         mock_service.calendarList().list().execute.return_value = {
-            'items': [
-                {'id': '#contacts@group.v.calendar.google.com', 'summary': 'Birthdays'},
-            ]
+            'items': [{'id': '#contacts@group.v.calendar.google.com', 'summary': 'Birthdays'}]
         }
-        # Capture the events().list() calls so we can inspect kwargs
-        captured_list_kwargs = {}
-
-        def capture_list(**kwargs):
-            captured_list_kwargs.update(kwargs)
-            list_mock = MagicMock()
-            list_mock.execute.return_value = {'items': []}
-            return list_mock
-
-        mock_service.events().list = capture_list
+        mock_service.events().list = capturing_list
         mock_get_svc.return_value = mock_service
 
-        # Freeze datetime.datetime.now inside calendar_service to return a Monday
-        fake_monday_naive = datetime.datetime(2026, 2, 23, 10, 0, 0)
-        fake_monday_aware = il_tz.localize(fake_monday_naive)
+        get_birthdays_next_week('+9991234568')
 
-        with patch.object(
-            calendar_service.datetime,
-            'datetime',
-            wraps=datetime.datetime,
-        ) as mock_datetime_cls:
-            mock_datetime_cls.now.return_value = fake_monday_aware
-            calendar_service.get_birthdays_next_week('+9991234567')
+        self.assertTrue(captured, "events().list() was never called — birthday calendar not found?")
 
-        self.assertTrue(captured_list_kwargs, "events().list() was never called")
-
-        time_min_str = captured_list_kwargs['timeMin']
-        time_max_str = captured_list_kwargs['timeMax']
-
-        # Parse and check the date portion
-        time_min_dt = datetime.datetime.fromisoformat(time_min_str)
-        time_max_dt = datetime.datetime.fromisoformat(time_max_str)
+        time_min_date = datetime.datetime.fromisoformat(captured['timeMin']).date()
+        time_max_date = datetime.datetime.fromisoformat(captured['timeMax']).date()
 
         self.assertEqual(
-            time_min_dt.date(), expected_sunday,
-            f"Expected timeMin to be Sunday {expected_sunday}, got {time_min_dt.date()}"
+            time_min_date, expected_week_start,
+            f"timeMin date {time_min_date} should be Sunday {expected_week_start}",
         )
         self.assertEqual(
-            time_max_dt.date(), expected_saturday,
-            f"Expected timeMax to be Saturday {expected_saturday}, got {time_max_dt.date()}"
+            time_max_date, expected_week_end,
+            f"timeMax date {time_max_date} should be Saturday {expected_week_end}",
         )
+        # Confirm Sunday and Saturday
+        self.assertEqual(time_min_date.weekday(), 6, "timeMin should be a Sunday (weekday 6)")
+        self.assertEqual(time_max_date.weekday(), 5, "timeMax should be a Saturday (weekday 5)")
