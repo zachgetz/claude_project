@@ -117,6 +117,7 @@ def send_change_alerts(phone_number, changes):
     )
 
     user_tz = get_user_tz(phone_number)
+    logger.info('[Alerts] User %s timezone: %s', phone_number, user_tz)
     now_local = datetime.datetime.now(tz=user_tz)
     today = now_local.date()
     tomorrow = today + datetime.timedelta(days=1)
