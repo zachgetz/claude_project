@@ -137,7 +137,7 @@ class MorningDigestTaskTests(TestCase):
     @patch(PATCH_GET_EVENTS)
     @patch(PATCH_TWILIO)
     def test_sends_no_meetings_when_digest_always(self, mock_twilio_cls, mock_get_events, mock_tz):
-        """digest_always=True + no events -> still sends 'No meetings' message."""
+        """digest_always=True + no events -> still sends a no-meetings message in Hebrew."""
         _make_token(phone=self.PHONE_A, digest_hour=8, digest_minute=0, digest_always=True)
 
         user_tz = pytz.UTC
@@ -157,7 +157,8 @@ class MorningDigestTaskTests(TestCase):
 
         mock_client.messages.create.assert_called_once()
         body = mock_client.messages.create.call_args.kwargs['body']
-        self.assertIn('No meetings', body)
+        # App sends Hebrew text; assert the Hebrew "no meetings today" phrase is present
+        self.assertIn('\u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d4\u05d9\u05d5\u05dd', body)
 
     @patch(PATCH_GET_USER_TZ)
     @patch(PATCH_GET_EVENTS)
