@@ -26,7 +26,7 @@ HELP_TEXT = (
     '\u2022 "tomorrow" \u2014 tomorrow\'s meetings\n'
     '\u2022 "friday" / "meetings thursday" \u2014 any day this week\n'
     '\u2022 "next monday" \u2014 following week\n'
-    '\u2022 "this week" \u2014 full week view\n'
+    '\u2022 "this week" \u2014 full week view (Mon\u2013Sun)\n'
     '\u2022 "next meeting" \u2014 your next upcoming event\n'
     '\u2022 "free today" \u2014 free slots today\n'
     "\n"
@@ -401,6 +401,8 @@ class WhatsAppWebhookView(APIView):
             return None
 
         user_tz = get_user_tz(from_number)
+        # Use user's local timezone for today so week boundaries are correct
+        # even near midnight (e.g. user is UTC-8 at 11pm Sun = Mon in UTC).
         today = datetime.datetime.now(tz=user_tz).date()
 
         target, label = resolve_day(body_lower, today)
@@ -411,6 +413,7 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
 
         if target == 'week':
+            # week_start uses user-tz today so weeks are Mon-Sun in user's calendar
             week_start = today - datetime.timedelta(days=today.weekday())
             week_end = week_start + datetime.timedelta(days=6)
             week_events = {}
