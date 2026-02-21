@@ -17,17 +17,28 @@ def send_morning_meetings_digest(self):
     """
     Send each connected user their meetings for today via WhatsApp.
     Respects per-user digest_enabled, digest_hour/minute (in user TZ), and digest_always.
-    Registered in django-celery-beat — runs frequently and each user checked individually.
+    Registered in django-celery-beat — runs every minute; per-user time check is inside.
+    Per-user errors are logged and skipped; self.retry() is only for infrastructure failures.
     """
-    client = Client(
-        settings.TWILIO_ACCOUNT_SID,
-        settings.TWILIO_AUTH_TOKEN,
-    )
-    from_number = settings.TWILIO_WHATSAPP_NUMBER
+    try:
+        tokens = list(CalendarToken.objects.filter(digest_enabled=True))
+    except Exception as exc:
+        logger.exception('Failed to query CalendarToken table: %s', exc)
+        raise self.retry(exc=exc)
 
+    try:
+        client = Client(
+            settings.TWILIO_ACCOUNT_SID,
+            settings.TWILIO_AUTH_TOKEN,
+        )
+    except Exception as exc:
+        logger.exception('Failed to initialise Twilio client: %s', exc)
+        raise self.retry(exc=exc)
+
+    from_number = settings.TWILIO_WHATSAPP_NUMBER
     now_utc = datetime.datetime.now(tz=pytz.UTC)
 
-    for token in CalendarToken.objects.filter(digest_enabled=True):
+    for token in tokens:
         phone_number = token.phone_number
         try:
             # Check if it's now the user's configured digest time (within the current minute)
@@ -37,12 +48,9 @@ def send_morning_meetings_digest(self):
                 continue
 
             _send_digest_for_user(client, from_number, token)
-        except Exception as exc:
-            logger.exception('Error sending morning digest to %s: %s', phone_number, exc)
-            try:
-                raise self.retry(exc=exc)
-            except Exception:
-                pass
+        except Exception:
+            # Log and continue — do NOT retry whole task for single-user failure
+            logger.exception('Error sending morning digest to %s', phone_number)
 
 
 def _send_digest_for_user(client, from_number, token):
@@ -76,7 +84,7 @@ def _send_digest_for_user(client, from_number, token):
 
     # Skip if no meetings and user hasn't opted into always-send
     if not items and not token.digest_always:
-        logger.info('No meetings for %s — skipping digest (digest_always=False)', phone_number)
+        logger.info('No meetings for %s \u2014 skipping digest (digest_always=False)', phone_number)
         return
 
     if not items:
