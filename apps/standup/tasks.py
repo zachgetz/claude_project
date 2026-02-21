@@ -38,6 +38,7 @@ def send_morning_checkin(self):
         settings.TWILIO_AUTH_TOKEN,
     )
     from_number = settings.TWILIO_WHATSAPP_NUMBER
+    status_callback_url = f"{settings.WEBHOOK_BASE_URL}/standup/twilio-status/"
 
     success_count = 0
     error_count = 0
@@ -48,6 +49,7 @@ def send_morning_checkin(self):
                 from_=from_number,
                 to=number,
                 body=MORNING_CHECKIN_MESSAGE,
+                status_callback=status_callback_url,
             )
             logger.info('Morning check-in sent to %s', number)
             success_count += 1
@@ -100,6 +102,7 @@ def send_evening_digest(self):
         settings.TWILIO_AUTH_TOKEN,
     )
     from_number = settings.TWILIO_WHATSAPP_NUMBER
+    status_callback_url = f"{settings.WEBHOOK_BASE_URL}/standup/twilio-status/"
 
     success_count = 0
     error_count = 0
@@ -123,6 +126,7 @@ def send_evening_digest(self):
                 from_=from_number,
                 to=number,
                 body=message_body,
+                status_callback=status_callback_url,
             )
             logger.info('Evening digest sent to %s', number)
             success_count += 1

@@ -14,13 +14,15 @@ All bot response text is 100% Hebrew. Only exception: user-provided content
 
 TZA-121: After returning a result from a meetings/free-time/birthdays submenu
 selection, keep pending_action set to the current submenu state and re-display
-the submenu options. Only clear submenu state when user sends 0 or בטל.
+the submenu options. Only clear submenu state when user sends 0 or \u05d1\u05d8\u05dc.
 """
 import datetime
 import logging
 import re
 from django.conf import settings
 from django.http import HttpResponse
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from twilio.twiml.messaging_response import MessagingResponse
@@ -854,6 +856,52 @@ class WhatsAppWebhookView(APIView):
     def _try_birthdays_next_week(self, from_number):
         """Kept for backward-compat with existing tests."""
         return self._query_birthdays(from_number, 'week')
+
+
+# --------------------------------------------------------------------------- #
+# TZA-130: Twilio delivery status callback view
+# --------------------------------------------------------------------------- #
+
+@method_decorator(csrf_exempt, name='dispatch')
+class TwilioStatusCallbackView(APIView):
+    """
+    POST /standup/twilio-status/
+
+    Receives Twilio message status callbacks and writes delivery events
+    to the application log so they appear in Railway logs.
+
+    - No authentication required (status callbacks are server-to-server;
+      they don't carry a Twilio request signature that matches the webhook URL).
+    - Returns HTTP 204 No Content for all valid POST requests.
+    """
+
+    permission_classes = []
+
+    def post(self, request, *args, **kwargs):
+        message_sid = request.data.get('MessageSid', '')
+        to = request.data.get('To', '')
+        status = request.data.get('MessageStatus', '')
+        error_code = request.data.get('ErrorCode', '')
+        error_message = request.data.get('ErrorMessage', '')
+
+        if status in ('sent', 'delivered'):
+            logger.info(
+                '[Twilio] %s \u2192 %s: %s',
+                message_sid,
+                to,
+                status,
+            )
+        else:
+            logger.error(
+                '[Twilio] %s \u2192 %s: %s (error %s: %s)',
+                message_sid,
+                to,
+                status,
+                error_code,
+                error_message,
+            )
+
+        return HttpResponse(status=204)
 
 
 # --------------------------------------------------------------------------- #
