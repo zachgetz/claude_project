@@ -1,4 +1,5 @@
 import datetime
+import re
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
@@ -15,14 +16,19 @@ class WhatsAppWebhookView(APIView):
     def post(self, request, *args, **kwargs):
         from_number = request.data.get('From', '')
         body = request.data.get('Body', '')
+        body_lower = body.strip().lower()
 
         # Handle /summary command BEFORE any saving
-        if body.strip().lower() == '/summary':
+        if body_lower == '/summary':
             return self._handle_summary(from_number)
 
         # Handle set timezone command
-        if body.lower().startswith('set timezone '):
+        if body_lower.startswith('set timezone '):
             return self._handle_set_timezone(from_number, body)
+
+        # Handle set digest command
+        if body_lower.startswith('set digest'):
+            return self._handle_set_digest(from_number, body_lower)
 
         if not body.strip():
             return Response({'error': 'Body cannot be empty.'}, status=400)
@@ -48,6 +54,58 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         response.message(reply_text)
 
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_set_digest(self, from_number, body_lower):
+        from apps.calendar_bot.models import CalendarToken
+
+        token, _ = CalendarToken.objects.get_or_create(
+            phone_number=from_number,
+            defaults={'access_token': '', 'refresh_token': ''},
+        )
+
+        # Parse: 'set digest off', 'set digest on', 'set digest always'
+        # 'set digest 7:30am', 'set digest 9am'
+        arg = body_lower[len('set digest'):].strip()
+
+        if arg == 'off':
+            token.digest_enabled = False
+            token.save(update_fields=['digest_enabled', 'updated_at'])
+            response = MessagingResponse()
+            response.message('Morning digest turned off.')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        if arg == 'on':
+            token.digest_enabled = True
+            token.save(update_fields=['digest_enabled', 'updated_at'])
+            response = MessagingResponse()
+            response.message('Morning digest turned on.')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        if arg == 'always':
+            token.digest_always = True
+            token.save(update_fields=['digest_always', 'updated_at'])
+            response = MessagingResponse()
+            response.message('Morning digest will be sent even on days with no meetings.')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        # Try to parse time like '7:30am', '9am', '14:00'
+        parsed = _parse_digest_time(arg)
+        if parsed is not None:
+            hour, minute = parsed
+            token.digest_hour = hour
+            token.digest_minute = minute
+            token.digest_enabled = True
+            token.save(update_fields=['digest_hour', 'digest_minute', 'digest_enabled', 'updated_at'])
+            response = MessagingResponse()
+            response.message(f'Morning digest scheduled for {hour:02d}:{minute:02d} in your timezone.')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        response = MessagingResponse()
+        response.message(
+            'Could not understand digest setting. '
+            'Try: "set digest 7:30am", "set digest off", "set digest on", "set digest always".'
+        )
         return HttpResponse(str(response), content_type='application/xml')
 
     def _handle_set_timezone(self, from_number, body):
@@ -101,3 +159,31 @@ class WhatsAppWebhookView(APIView):
             response.message(reply_text)
 
         return HttpResponse(str(response), content_type='application/xml')
+
+
+def _parse_digest_time(arg):
+    """
+    Parse time strings like '7:30am', '9am', '14:00', '9:00pm'.
+    Returns (hour, minute) in 24-hour format, or None if unparseable.
+    """
+    # Normalize
+    arg = arg.strip().lower().replace(' ', '')
+
+    # Match h:mam/pm or hampm
+    m = re.match(r'^(\d{1,2})(?::(\d{2}))?(am|pm)?$', arg)
+    if not m:
+        return None
+
+    hour = int(m.group(1))
+    minute = int(m.group(2)) if m.group(2) else 0
+    ampm = m.group(3)
+
+    if ampm == 'pm' and hour != 12:
+        hour += 12
+    elif ampm == 'am' and hour == 12:
+        hour = 0
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+
+    return hour, minute
