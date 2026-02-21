@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 def send_morning_meetings_digest(self):
     """
     Send each connected user their meetings for today via WhatsApp.
-    Registered in django-celery-beat at 08:00 UTC daily by default.
+    Respects per-user digest_enabled, digest_hour/minute (in user TZ), and digest_always.
+    Registered in django-celery-beat — runs frequently and each user checked individually.
     """
     client = Client(
         settings.TWILIO_ACCOUNT_SID,
@@ -24,10 +25,18 @@ def send_morning_meetings_digest(self):
     )
     from_number = settings.TWILIO_WHATSAPP_NUMBER
 
-    for token in CalendarToken.objects.all():
+    now_utc = datetime.datetime.now(tz=pytz.UTC)
+
+    for token in CalendarToken.objects.filter(digest_enabled=True):
         phone_number = token.phone_number
         try:
-            _send_digest_for_user(client, from_number, phone_number)
+            # Check if it's now the user's configured digest time (within the current minute)
+            user_tz = get_user_tz(phone_number)
+            now_local = now_utc.astimezone(user_tz)
+            if now_local.hour != token.digest_hour or now_local.minute != token.digest_minute:
+                continue
+
+            _send_digest_for_user(client, from_number, token)
         except Exception as exc:
             logger.exception('Error sending morning digest to %s: %s', phone_number, exc)
             try:
@@ -36,7 +45,8 @@ def send_morning_meetings_digest(self):
                 pass
 
 
-def _send_digest_for_user(client, from_number, phone_number):
+def _send_digest_for_user(client, from_number, token):
+    phone_number = token.phone_number
     user_tz = get_user_tz(phone_number)
     today = datetime.datetime.now(tz=user_tz).date()
 
@@ -63,6 +73,11 @@ def _send_digest_for_user(client, from_number, phone_number):
         return
 
     items = events_result.get('items', [])
+
+    # Skip if no meetings and user hasn't opted into always-send
+    if not items and not token.digest_always:
+        logger.info('No meetings for %s — skipping digest (digest_always=False)', phone_number)
+        return
 
     if not items:
         message = 'Good morning! No meetings today \U0001f389'
