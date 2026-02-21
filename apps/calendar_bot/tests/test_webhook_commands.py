@@ -1,7 +1,21 @@
 """
 Unit tests for calendar-bot commands handled in apps.standup.views.WhatsAppWebhookView.
 
-Covers: set timezone, set digest, day queries, next meeting, free today, help, block commands.
+Updated for TZA-112: The bot was redesigned (TZA-110) to a fully menu-driven Hebrew UI.
+All old English text commands (set timezone, set digest, block, today, help, etc.) have
+been replaced by numbered-digit navigation.  These tests exercise the new menu-driven
+flow by injecting the appropriate UserMenuState before sending each POST request.
+
+Tests still covered:
+  - Timezone selection via Settings > Timezone submenu
+  - Digest time prompt via Settings > Digest submenu
+  - Day queries routed via Meetings submenu
+  - Next-meeting query via Meetings submenu
+  - Free-time query via Free-time submenu
+  - Help text returned on main_menu digit "6"
+  - Unconnected user receives onboarding greeting
+  - Block text commands are no longer handled; connected users see main menu
+
 The TwilioSignaturePermission is patched out for all tests.
 Updated for TZA-78 multi-account: _make_token includes account_email.
 """
@@ -12,7 +26,8 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from apps.calendar_bot.models import CalendarToken, PendingBlockConfirmation
+from apps.calendar_bot.models import CalendarToken, PendingBlockConfirmation, UserMenuState
+from apps.standup.views import _set_state
 
 
 PATCH_PERMISSION = patch(
@@ -39,6 +54,7 @@ def _make_token(phone='whatsapp:+1234567890', tz='America/New_York', email='test
 
 @override_settings(**TWILIO_SETTINGS)
 class SetTimezoneCommandTests(TestCase):
+    """Timezone is set via Settings (5) > Timezone (1) > digit 1-6 in new menu-driven UI."""
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -54,7 +70,9 @@ class SetTimezoneCommandTests(TestCase):
             )
 
     def test_valid_timezone_saved(self):
-        response = self._post('set timezone Europe/London')
+        """Selecting digit '2' in timezone_menu saves Europe/London and confirms in response."""
+        _set_state(self.PHONE, 'timezone_menu', 1, {})
+        response = self._post('2')  # Europe/London per TZ_MAP
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn('Europe/London', content)
@@ -63,23 +81,28 @@ class SetTimezoneCommandTests(TestCase):
         self.assertIsNotNone(token)
         self.assertEqual(token.timezone, 'Europe/London')
 
-    def test_invalid_timezone_returns_error(self):
-        response = self._post('set timezone Mars/Olympus')
+    def test_invalid_digit_returns_error(self):
+        """An out-of-range digit in timezone_menu returns INVALID_OPTION message."""
+        _set_state(self.PHONE, 'timezone_menu', 1, {})
+        response = self._post('9')  # not a valid choice (1-6 only)
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('Unknown timezone', content)
+        # INVALID_OPTION from strings_he
+        self.assertIn('ענה תשובה תקינה', content)
 
-    def test_case_insensitive_command_prefix(self):
-        """'set timezone' must start lowercase per views logic."""
-        response = self._post('set timezone UTC')
+    def test_digit_3_saves_new_york(self):
+        """Selecting digit '3' in timezone_menu saves America/New_York."""
+        _set_state(self.PHONE, 'timezone_menu', 1, {})
+        response = self._post('3')  # America/New_York per TZ_MAP
         self.assertEqual(response.status_code, 200)
         token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
         self.assertIsNotNone(token)
-        self.assertEqual(token.timezone, 'UTC')
+        self.assertEqual(token.timezone, 'America/New_York')
 
 
 @override_settings(**TWILIO_SETTINGS)
 class SetDigestCommandTests(TestCase):
+    """Digest time is set via Settings (5) > Digest (2) > HH:MM in new menu-driven UI."""
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -94,29 +117,10 @@ class SetDigestCommandTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    def test_set_digest_off(self):
-        response = self._post('set digest off')
-        self.assertEqual(response.status_code, 200)
-        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
-        self.assertFalse(token.digest_enabled)
-
-    def test_set_digest_on(self):
-        # First disable, then re-enable
-        CalendarToken.objects.filter(phone_number=self.PHONE).update(digest_enabled=False)
-
-        response = self._post('set digest on')
-        self.assertEqual(response.status_code, 200)
-        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
-        self.assertTrue(token.digest_enabled)
-
-    def test_set_digest_always(self):
-        response = self._post('set digest always')
-        self.assertEqual(response.status_code, 200)
-        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
-        self.assertTrue(token.digest_always)
-
     def test_set_digest_time_24h(self):
-        response = self._post('set digest 7:30am')
+        """Sending '07:30' in digest_prompt state sets hour=7 minute=30 and confirms."""
+        _set_state(self.PHONE, 'digest_prompt', 1, {})
+        response = self._post('07:30')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn('07:30', content)
@@ -126,22 +130,44 @@ class SetDigestCommandTests(TestCase):
         self.assertEqual(token.digest_minute, 30)
 
     def test_set_digest_time_pm(self):
-        response = self._post('set digest 2pm')
+        """Sending '14:00' in digest_prompt state sets hour=14 minute=0."""
+        _set_state(self.PHONE, 'digest_prompt', 1, {})
+        response = self._post('14:00')
         self.assertEqual(response.status_code, 200)
         token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
         self.assertEqual(token.digest_hour, 14)
         self.assertEqual(token.digest_minute, 0)
 
     def test_set_digest_invalid_time_returns_error(self):
-        response = self._post('set digest bananas')
+        """Sending a non-time string in digest_prompt returns the Hebrew invalid-time error."""
+        _set_state(self.PHONE, 'digest_prompt', 1, {})
+        response = self._post('bananas')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('Could not understand', content)
+        # DIGEST_INVALID from strings_he
+        self.assertIn('שעה לא תקינה', content)
+
+    def test_digest_settings_submenu_option_2_shows_prompt(self):
+        """From settings_menu state, sending '2' enters digest_prompt and shows HH:MM hint."""
+        _set_state(self.PHONE, 'settings_menu', 1, {})
+        response = self._post('2')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # DIGEST_PROMPT from strings_he contains 'HH:MM'
+        self.assertIn('HH:MM', content)
+
+    def test_set_digest_back_to_menu(self):
+        """Sending '0' from digest_prompt returns to the main menu."""
+        _set_state(self.PHONE, 'digest_prompt', 1, {})
+        response = self._post('0')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('תפריט ראשי', content)
 
 
 @override_settings(**TWILIO_SETTINGS)
 class DayQueryTests(TestCase):
-    """Tests for calendar day queries routed through WhatsApp webhook."""
+    """Tests for calendar day queries routed through the Meetings submenu."""
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -156,41 +182,46 @@ class DayQueryTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    @patch('apps.standup.views.WhatsAppWebhookView._try_day_query')
-    def test_today_query_routed(self, mock_day_query):
+    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings')
+    def test_today_query_routed(self, mock_query):
+        """Meetings submenu digit '1' calls _query_meetings (today)."""
         from django.http import HttpResponse
         from twilio.twiml.messaging_response import MessagingResponse
         twiml = MessagingResponse()
         twiml.message('09:00 Standup\n1 meeting')
-        mock_day_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        mock_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
 
-        response = self._post('today')
+        _set_state(self.PHONE, 'meetings_menu', 1, {})
+        response = self._post('1')
         self.assertEqual(response.status_code, 200)
-        mock_day_query.assert_called_once()
+        mock_query.assert_called_once()
 
-    @patch('apps.standup.views.WhatsAppWebhookView._try_day_query')
-    def test_tomorrow_query_routed(self, mock_day_query):
+    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings')
+    def test_tomorrow_query_routed(self, mock_query):
+        """Meetings submenu digit '2' calls _query_meetings (tomorrow)."""
         from django.http import HttpResponse
         from twilio.twiml.messaging_response import MessagingResponse
         twiml = MessagingResponse()
         twiml.message('14:00 Planning\n1 meeting')
-        mock_day_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        mock_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
 
-        response = self._post('tomorrow')
+        _set_state(self.PHONE, 'meetings_menu', 1, {})
+        response = self._post('2')
         self.assertEqual(response.status_code, 200)
-        mock_day_query.assert_called_once()
+        mock_query.assert_called_once()
 
     @patch('apps.calendar_bot.calendar_service.get_calendar_service')
     def test_named_day_no_token_returns_nothing_routed_to_standup(self, mock_get_svc):
-        """User without CalendarToken falls through to standup logging."""
+        """User without CalendarToken sending any text gets a 200 response."""
         CalendarToken.objects.filter(phone_number=self.PHONE).delete()
         response = self._post('friday')
-        # Without a token, day query returns None, falls through to onboarding
+        # Without a token, user gets onboarding flow
         self.assertEqual(response.status_code, 200)
 
 
 @override_settings(**TWILIO_SETTINGS)
 class NextMeetingTests(TestCase):
+    """Next-meeting query via Meetings submenu digit '4'."""
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -205,33 +236,38 @@ class NextMeetingTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    @patch('apps.standup.views.WhatsAppWebhookView._try_next_meeting')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_next_meeting')
     def test_next_meeting_trigger_routed(self, mock_next):
+        """Meetings submenu digit '4' calls _query_next_meeting."""
         from django.http import HttpResponse
         from twilio.twiml.messaging_response import MessagingResponse
         twiml = MessagingResponse()
         twiml.message('Your next meeting: Standup at 09:00 (in 30 minutes)')
         mock_next.return_value = HttpResponse(str(twiml), content_type='application/xml')
 
-        response = self._post('next meeting')
+        _set_state(self.PHONE, 'meetings_menu', 1, {})
+        response = self._post('4')
         self.assertEqual(response.status_code, 200)
         mock_next.assert_called_once()
 
-    @patch('apps.standup.views.WhatsAppWebhookView._try_next_meeting')
-    def test_next_alias_trigger_routed(self, mock_next):
+    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings')
+    def test_week_query_routed(self, mock_query):
+        """Meetings submenu digit '3' calls _query_meetings (this week)."""
         from django.http import HttpResponse
         from twilio.twiml.messaging_response import MessagingResponse
         twiml = MessagingResponse()
         twiml.message('No more meetings this week.')
-        mock_next.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        mock_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
 
-        response = self._post('next')
+        _set_state(self.PHONE, 'meetings_menu', 1, {})
+        response = self._post('3')
         self.assertEqual(response.status_code, 200)
-        mock_next.assert_called_once()
+        mock_query.assert_called_once()
 
 
 @override_settings(**TWILIO_SETTINGS)
 class FreeTodayTests(TestCase):
+    """Free-time queries via Free-time submenu."""
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -246,33 +282,41 @@ class FreeTodayTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    @patch('apps.standup.views.WhatsAppWebhookView._try_free_today')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_free_time')
     def test_free_today_trigger_routed(self, mock_free):
+        """Free-time submenu digit '1' calls _query_free_time for today."""
         from django.http import HttpResponse
         from twilio.twiml.messaging_response import MessagingResponse
         twiml = MessagingResponse()
         twiml.message("You're completely free today.")
         mock_free.return_value = HttpResponse(str(twiml), content_type='application/xml')
 
-        response = self._post('free today')
+        _set_state(self.PHONE, 'free_time_menu', 1, {})
+        response = self._post('1')
         self.assertEqual(response.status_code, 200)
         mock_free.assert_called_once()
 
-    @patch('apps.standup.views.WhatsAppWebhookView._try_free_today')
-    def test_am_i_free_trigger_routed(self, mock_free):
+    @patch('apps.standup.views.WhatsAppWebhookView._query_free_time')
+    def test_free_tomorrow_trigger_routed(self, mock_free):
+        """Free-time submenu digit '2' calls _query_free_time for tomorrow."""
         from django.http import HttpResponse
         from twilio.twiml.messaging_response import MessagingResponse
         twiml = MessagingResponse()
         twiml.message('Free slots today:\n\u2022 08:00\u201309:00 (1 hr)')
         mock_free.return_value = HttpResponse(str(twiml), content_type='application/xml')
 
-        response = self._post('am i free')
+        _set_state(self.PHONE, 'free_time_menu', 1, {})
+        response = self._post('2')
         self.assertEqual(response.status_code, 200)
         mock_free.assert_called_once()
 
 
 @override_settings(**TWILIO_SETTINGS)
 class HelpCommandTests(TestCase):
+    """
+    Help text is returned when user selects digit '6' from the main_menu state.
+    The '?' shortcut and 'help' text command are no longer recognised in the TZA-110 redesign.
+    """
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -287,33 +331,47 @@ class HelpCommandTests(TestCase):
             )
 
     def test_help_returns_command_list(self):
-        response = self._post('help')
+        """Sending '6' from main_menu state returns the Hebrew help/instructions text."""
+        _make_token(phone=self.PHONE)
+        _set_state(self.PHONE, 'main_menu', 1, {})
+        response = self._post('6')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('today', content)
-        self.assertIn('block', content)
+        # HELP_TEXT from strings_he mentions 'העוזר' (the assistant)
+        self.assertIn('העוזר', content)
 
-    def test_question_mark_returns_help(self):
-        response = self._post('?')
+    def test_main_menu_zero_returns_main_menu(self):
+        """Sending '0' from main_menu state re-shows the main menu."""
+        _make_token(phone=self.PHONE)
+        _set_state(self.PHONE, 'main_menu', 1, {})
+        response = self._post('0')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('today', content)
+        self.assertIn('תפריט ראשי', content)
 
-    def test_unconnected_user_gets_standup_recording(self):
-        """User with no CalendarToken and unrecognized message gets recorded as standup entry.
+    def test_unconnected_user_gets_onboarding(self):
+        """
+        User with no CalendarToken sending any message starts the onboarding flow.
 
-        TZA-58 intentionally removed the catch-all _maybe_onboarding() call so that
-        unrecognized messages are always logged as standup entries. Onboarding is only
-        shown in response to explicit help/? commands. This test verifies that routing.
+        TZA-110 replaced the old English standup-recording with a Hebrew onboarding flow.
+        Unrecognised messages from unconnected users now trigger onboarding rather than
+        logging a standup entry.
         """
         response = self._post('hello world')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('Logged', content)
+        # ONBOARDING_GREETING from strings_he contains 'היי'
+        self.assertIn('היי', content)
 
 
 @override_settings(**TWILIO_SETTINGS)
 class BlockCommandTests(TestCase):
+    """
+    Block commands are no longer supported as text commands in the TZA-110 redesign.
+    Connected users sending 'block ...' text now receive the Hebrew main menu.
+    Unconnected users sending 'block ...' text receive the onboarding greeting.
+    The YES confirmation path is also no longer handled; connected users get the main menu.
+    """
 
     PHONE = 'whatsapp:+1234567890'
 
@@ -328,32 +386,34 @@ class BlockCommandTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    @patch('apps.calendar_bot.calendar_service.handle_block_command')
-    def test_block_no_conflict(self, mock_handle):
-        mock_handle.return_value = '\u2705 Blocked: "Focus" on Saturday, Feb 21 14:00-16:00'
-
+    def test_block_text_returns_main_menu_for_connected_user(self):
+        """Connected user sending 'block tomorrow 2-4pm Focus' receives the main menu."""
         response = self._post('block tomorrow 2-4pm Focus')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('Blocked', content)
-        mock_handle.assert_called_once()
+        self.assertIn('תפריט ראשי', content)
 
-    @patch('apps.calendar_bot.calendar_service.handle_block_command')
-    def test_block_with_conflict_asks_confirmation(self, mock_handle):
-        mock_handle.return_value = (
-            '\u26a0\ufe0f Conflict detected: "Standup" overlaps with 10:00-11:00 on Saturday, Feb 21.\n'
-            'Reply YES to create "Deep Work" anyway.'
-        )
+    def test_block_no_token_returns_onboarding(self):
+        """User without a CalendarToken sending 'block' receives the onboarding greeting."""
+        CalendarToken.objects.filter(phone_number=self.PHONE).delete()
+        response = self._post('block tomorrow 2-4pm')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Onboarding greeting: 'היי'
+        self.assertIn('היי', content)
 
+    def test_block_conflict_text_returns_main_menu(self):
+        """Connected user sending 'block tomorrow 10-11am Deep Work' gets main menu."""
         response = self._post('block tomorrow 10-11am Deep Work')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('YES', content)
+        self.assertIn('תפריט ראשי', content)
 
-    @patch('apps.calendar_bot.calendar_service.confirm_block_command')
-    def test_yes_confirms_pending_block(self, mock_confirm):
-        mock_confirm.return_value = '\u2705 Blocked: "Deep Work" on Saturday, Feb 21 10:00-11:00'
-
+    def test_yes_with_pending_block_returns_main_menu(self):
+        """
+        'YES' is no longer processed as a block confirmation in the TZA-110 redesign.
+        Connected users sending 'YES' receive the main menu regardless of pending blocks.
+        """
         PendingBlockConfirmation.objects.create(
             phone_number=self.PHONE,
             event_data={
@@ -367,23 +427,12 @@ class BlockCommandTests(TestCase):
         response = self._post('YES')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('Blocked', content)
-        mock_confirm.assert_called_once_with(self.PHONE)
+        # New design: connected user gets main menu, not block confirmation
+        self.assertIn('תפריט ראשי', content)
 
     def test_yes_with_no_pending_falls_through(self):
-        """YES with no pending block should fall through to standup logging."""
+        """YES with no pending block should not return a 'Blocked:' confirmation."""
         response = self._post('YES')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertNotIn('Blocked:', content)
-
-    @patch('apps.calendar_bot.calendar_service.handle_block_command')
-    def test_block_no_token_returns_connect_calendar_message(self, mock_handle):
-        """User without a CalendarToken gets the connect calendar message."""
-        CalendarToken.objects.filter(phone_number=self.PHONE).delete()
-
-        response = self._post('block tomorrow 2-4pm')
-        self.assertEqual(response.status_code, 200)
-        content = response.content.decode()
-        self.assertIn('connect', content.lower())
-        mock_handle.assert_not_called()
