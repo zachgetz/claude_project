@@ -1,27 +1,7 @@
-import uuid
-
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('calendar_bot', '0003_calendarevent_snapshot'),
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='CalendarWatchChannel',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('phone_number', models.CharField(max_length=30)),
-                ('channel_id', models.UUIDField(default=uuid.uuid4)),
-                ('resource_id', models.CharField(blank=True, max_length=255)),
-                ('expiry', models.DateTimeField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-            ],
-            options={
-                'unique_together': {('phone_number', 'channel_id')},
-            },
-        ),
-    ]
+# This migration has been renumbered to 0005_calendarwatchchannel.py
+# Delete this file if it still exists in your working tree.
+raise ImportError(
+    "This migration has been renumbered. "
+    "Use 0005_calendarwatchchannel.py instead. "
+    "Delete this file."
+)
