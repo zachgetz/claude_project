@@ -31,9 +31,13 @@ def resolve_day(text, today):
     - 'today', 'meetings', 'meetings today'
     - 'tomorrow'
     - 'monday' ... 'sunday' (nearest upcoming, today counts)
-    - 'next monday' ... 'next sunday' (always following week)
+    - 'next monday' ... 'next sunday' (always the FOLLOWING Mon-Sun calendar week)
     - 'meetings friday', 'friday meetings', "what's on thursday"
     - 'this week' -> returns ('week', week_label)
+
+    "next <day>" semantics: always the X of the following calendar week (Mon-Sun),
+    never the X that is just 1 day away (e.g. "next tuesday" on a Monday jumps
+    to the Tuesday of next week, not tomorrow).
     """
     text = text.strip().lower()
     text = text.replace("what's on ", '').replace("whats on ", '')
@@ -53,20 +57,21 @@ def resolve_day(text, today):
         d = today + datetime.timedelta(days=1)
         return d, _date_label(d)
 
-    # 'next <day>'
+    # 'next <day>': jump to the following Mon-Sun calendar week, then find the
+    # target weekday within that week.
     if text.startswith('next '):
         day_word = text[5:].strip()
         if day_word in DAY_NAMES:
             target_weekday = DAY_NAMES[day_word]
-            # Always jump to the following Mon-Sun calendar week, then find
-            # the target weekday within that week.
+            # Compute days until next Monday; if today is Monday, that is 7 days
+            # (not 0) so we always land in the *following* week.
             days_until_next_monday = (7 - today.weekday()) % 7 or 7
             next_monday = today + datetime.timedelta(days=days_until_next_monday)
             days_ahead = (target_weekday - next_monday.weekday()) % 7
             d = next_monday + datetime.timedelta(days=days_ahead)
             return d, _date_label(d)
 
-    # plain day name
+    # plain day name: nearest upcoming occurrence (today counts as 0 days ahead)
     if text in DAY_NAMES:
         target_weekday = DAY_NAMES[text]
         days_ahead = target_weekday - today.weekday()
@@ -101,12 +106,12 @@ def format_events_for_day(events, date_label):
 
 def format_week_view(week_events, week_start, week_end):
     """
-    Format a condensed week view.
+    Format a condensed week view. Weeks run Mon-Sun.
     week_events: dict of date -> list of event dicts
     """
     start_label = week_start.strftime('%b %-d')
     end_label = week_end.strftime('%b %-d')
-    lines = [f'This week ({start_label}\u2013{end_label}):']
+    lines = [f'This week (Mon {start_label} \u2013 Sun {end_label}):']
 
     current = week_start
     while current <= week_end:
