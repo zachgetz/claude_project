@@ -2,17 +2,12 @@
 TZA-110: Full menu-driven WhatsApp bot redesign.
 
 State machine:
- - Root level: ANY input -> show main menu (unless user is picking a digit from it).
-   The root level also handles main-menu digit 1-6 selection to enter submenus.
+ - Root level: ANY input -> show main menu and set state='main_menu'.
+ - main_menu state: digit 1-6 enters corresponding submenu.
  - Inside a numbered submenu: only valid digits (including 0) accepted.
    Any other input -> INVALID_OPTION + re-show current menu.
  - Inside Schedule flow (action='schedule'): free text on text steps,
-   structured validation on date/time steps. 0 or 'בטל' at any step -> cancel.
-
-Main-menu flow:
-  1. User sends any text at root -> clear state, show MAIN_MENU_TEXT.
-  2. User sends digit 1-6 at root (no state) -> enter corresponding submenu.
-  3. User sends digit inside submenu -> handle per submenu rules.
+   structured validation on date/time steps. 0 or 'Cancel' at any step -> cancel.
 
 All bot response text is 100% Hebrew. Only exception: user-provided content
 (e.g. event title typed in English).
@@ -32,7 +27,7 @@ from apps.standup.models import StandupEntry
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Timezone map for settings submenu
+# Timezone map for settings submenu (index 0 = option 1)
 # --------------------------------------------------------------------------- #
 
 TZ_MAP = [
@@ -43,6 +38,7 @@ TZ_MAP = [
     'Asia/Dubai',
     'America/Los_Angeles',
 ]
+
 
 # --------------------------------------------------------------------------- #
 # Helper: send a TwiML XML response
@@ -55,7 +51,7 @@ def _xml(text):
 
 
 # --------------------------------------------------------------------------- #
-# State helpers
+# State helpers (UserMenuState)
 # --------------------------------------------------------------------------- #
 
 def _get_state(phone_number):
@@ -87,16 +83,16 @@ def _clear_state(phone_number):
 
 def _parse_date_input(text, user_tz):
     """
-    Accept: 'היום', 'מחר', DD/MM, DD/MM/YYYY.
+    Accept: Hebrew/English words for today/tomorrow, DD/MM, DD/MM/YYYY.
     Returns datetime.date or None.
     """
     text = text.strip()
     now_local = datetime.datetime.now(tz=user_tz)
     today = now_local.date()
 
-    if text in ('היום', 'today'):
+    if text in ('\u05d4\u05d9\u05d5\u05dd', 'today'):
         return today
-    if text in ('מחר', 'tomorrow'):
+    if text in ('\u05de\u05d7\u05e8', 'tomorrow'):
         return today + datetime.timedelta(days=1)
 
     # DD/MM
@@ -175,10 +171,12 @@ class WhatsAppWebhookView(APIView):
         if action in ('meetings_menu', 'free_time_menu', 'birthdays_menu',
                       'settings_menu', 'timezone_menu', 'disconnect_confirm',
                       'digest_prompt'):
-            return self._handle_menu_state(request, from_number, body_stripped, action, step, data)
+            return self._handle_menu_state(
+                request, from_number, body_stripped, action, step, data
+            )
 
         # ------------------------------------------------------------------- #
-        # STATE: main_menu (user has seen the menu and is picking an option)
+        # STATE: main_menu (user already saw the main menu; now picking)
         # ------------------------------------------------------------------- #
         if action == 'main_menu':
             return self._handle_main_menu_pick(request, from_number, body_stripped)
@@ -186,17 +184,17 @@ class WhatsAppWebhookView(APIView):
         # ------------------------------------------------------------------- #
         # ROOT LEVEL (no active state)
         # ------------------------------------------------------------------- #
-        return self._handle_root(request, from_number, body_stripped, body_lower)
+        return self._handle_root(request, from_number, body_stripped)
 
     # ----------------------------------------------------------------------- #
-    # Root handler
+    # Root handler: show main menu (or onboarding for new users)
     # ----------------------------------------------------------------------- #
 
-    def _handle_root(self, request, from_number, body_stripped, body_lower):
+    def _handle_root(self, request, from_number, body_stripped):
         import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken, OnboardingState
 
-        # Empty body: ignore
+        # Empty body
         if not body_stripped:
             logger.warning('Empty body from phone=%s', from_number)
             return Response({'error': 'Body cannot be empty.'}, status=400)
@@ -209,22 +207,20 @@ class WhatsAppWebhookView(APIView):
         except OnboardingState.DoesNotExist:
             pass
 
-        # Check if user has a connected calendar
+        # Check calendar connection
         token = CalendarToken.objects.filter(
             phone_number=from_number
         ).order_by('created_at').first()
         has_calendar = bool(token and token.access_token)
 
         if not has_calendar:
-            # First contact or no calendar: start onboarding
-            onboarding_exists = OnboardingState.objects.filter(phone_number=from_number).exists()
-            if not onboarding_exists:
-                logger.info('First contact — starting onboarding: phone=%s', from_number)
+            if not OnboardingState.objects.filter(phone_number=from_number).exists():
+                logger.info('First contact - starting onboarding: phone=%s', from_number)
                 OnboardingState.objects.get_or_create(phone_number=from_number)
                 return _xml(s.ONBOARDING_GREETING)
             return _xml(s.ONBOARDING_NAME_REPROMPT)
 
-        # Connected user at root level -> show main menu, set state to main_menu
+        # Connected user at root -> show main menu, enter main_menu state
         _set_state(from_number, 'main_menu', 1, {})
         return _xml(s.MAIN_MENU_TEXT)
 
@@ -265,12 +261,12 @@ class WhatsAppWebhookView(APIView):
             _set_state(from_number, 'main_menu', 1, {})
             return _xml(s.MAIN_MENU_TEXT)
 
-        # Invalid digit for main menu -> show error + re-show main menu
+        # Invalid -> error + re-show main menu
         _set_state(from_number, 'main_menu', 1, {})
         return _xml(s.INVALID_OPTION + '\n' + s.MAIN_MENU_TEXT)
 
     # ----------------------------------------------------------------------- #
-    # Numbered menu state handler
+    # Numbered submenu state handler
     # ----------------------------------------------------------------------- #
 
     def _handle_menu_state(self, request, from_number, body_stripped, action, step, data):
@@ -278,7 +274,7 @@ class WhatsAppWebhookView(APIView):
 
         digit = body_stripped.strip()
 
-        # ---- Meetings submenu ----
+        # ---- Meetings submenu -------------------------------------------- #
         if action == 'meetings_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
@@ -295,10 +291,9 @@ class WhatsAppWebhookView(APIView):
             if digit == '4':
                 _clear_state(from_number)
                 return self._query_next_meeting(from_number)
-            # invalid
             return _xml(s.INVALID_OPTION + '\n' + s.MEETINGS_MENU_TEXT)
 
-        # ---- Free time submenu ----
+        # ---- Free time submenu ------------------------------------------- #
         if action == 'free_time_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
@@ -309,7 +304,7 @@ class WhatsAppWebhookView(APIView):
                 return self._query_free_time(from_number, day_map[digit])
             return _xml(s.INVALID_OPTION + '\n' + s.FREE_TIME_MENU_TEXT)
 
-        # ---- Birthdays submenu ----
+        # ---- Birthdays submenu ------------------------------------------- #
         if action == 'birthdays_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
@@ -322,7 +317,7 @@ class WhatsAppWebhookView(APIView):
                 return self._query_birthdays(from_number, 'month')
             return _xml(s.INVALID_OPTION + '\n' + s.BIRTHDAYS_MENU_TEXT)
 
-        # ---- Settings submenu ----
+        # ---- Settings submenu -------------------------------------------- #
         if action == 'settings_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
@@ -341,7 +336,7 @@ class WhatsAppWebhookView(APIView):
                 return _xml(s.DISCONNECT_CONFIRM_TEXT)
             return _xml(s.INVALID_OPTION + '\n' + s.SETTINGS_MENU_TEXT)
 
-        # ---- Timezone submenu ----
+        # ---- Timezone submenu -------------------------------------------- #
         if action == 'timezone_menu':
             if digit == '0':
                 _set_state(from_number, 'settings_menu', 1, {})
@@ -352,12 +347,11 @@ class WhatsAppWebhookView(APIView):
                 return self._set_timezone(from_number, tz_name)
             return _xml(s.INVALID_OPTION + '\n' + s.TIMEZONE_MENU_TEXT)
 
-        # ---- Digest prompt (free-text step) ----
+        # ---- Digest prompt (free-text step) ------------------------------ #
         if action == 'digest_prompt':
-            if digit in ('0', 'בטל'):
+            if digit in ('0', '\u05d1\u05d8\u05dc'):
                 _set_state(from_number, 'main_menu', 1, {})
                 return _xml(s.MAIN_MENU_TEXT)
-            # Validate HH:MM
             t = _parse_time_hhmm(body_stripped)
             if t is None:
                 return _xml(s.DIGEST_INVALID + '\n' + s.DIGEST_PROMPT)
@@ -370,9 +364,9 @@ class WhatsAppWebhookView(APIView):
             logger.info('Digest time set to %02d:%02d for phone=%s', h, m, from_number)
             return _xml(s.DIGEST_TIME_SET.format(hour=h, minute=m))
 
-        # ---- Disconnect confirm ----
+        # ---- Disconnect confirm ------------------------------------------ #
         if action == 'disconnect_confirm':
-            if digit in ('0', '2', 'לא'):
+            if digit in ('0', '2', '\u05dc\u05d0'):
                 _set_state(from_number, 'main_menu', 1, {})
                 return _xml(s.MAIN_MENU_TEXT)
             if digit == '1':
@@ -392,8 +386,8 @@ class WhatsAppWebhookView(APIView):
         import apps.standup.strings_he as s
         from apps.calendar_bot.calendar_service import get_user_tz, create_event
 
-        # Cancel anytime
-        if body_stripped in ('0', 'בטל'):
+        # Cancel anytime with 0 or 'batel'
+        if body_stripped in ('0', '\u05d1\u05d8\u05dc'):
             _clear_state(from_number)
             return _xml(s.SCHEDULE_CANCELLED + '\n' + s.MAIN_MENU_TEXT)
 
@@ -439,30 +433,30 @@ class WhatsAppWebhookView(APIView):
             _set_state(from_number, 'schedule', 5, data)
             return _xml(s.SCHEDULE_STEP5)
 
-        # Step 5: description (or 'דלג')
+        # Step 5: description (or 'daleg' to skip)
         if step == 5:
-            if body_stripped == 'דלג':
+            if body_stripped == '\u05d3\u05dc\u05d2':
                 data['description'] = None
             else:
                 data['description'] = body_stripped
             _set_state(from_number, 'schedule', 6, data)
             return _xml(s.SCHEDULE_STEP6)
 
-        # Step 6: location (or 'דלג')
+        # Step 6: location (or 'daleg' to skip)
         if step == 6:
-            if body_stripped == 'דלג':
+            if body_stripped == '\u05d3\u05dc\u05d2':
                 data['location'] = None
             else:
                 data['location'] = body_stripped
             _set_state(from_number, 'schedule', 7, data)
             return _xml(self._build_schedule_summary(data))
 
-        # Step 7: confirm (אשר / בטל)
+        # Step 7: confirm (asher / batel)
         if step == 7:
-            if body_stripped == 'בטל':
+            if body_stripped == '\u05d1\u05d8\u05dc':
                 _clear_state(from_number)
                 return _xml(s.SCHEDULE_CANCELLED + '\n' + s.MAIN_MENU_TEXT)
-            if body_stripped == 'אשר':
+            if body_stripped == '\u05d0\u05e9\u05e8':
                 _clear_state(from_number)
                 target_date = datetime.date.fromisoformat(data['date'])
                 ok, result = create_event(
@@ -493,17 +487,17 @@ class WhatsAppWebhookView(APIView):
 
     def _build_schedule_summary(self, data):
         target_date = datetime.date.fromisoformat(data['date'])
-        desc_display = data.get('description') or '—'
-        loc_display = data.get('location') or '—'
+        desc_display = data.get('description') or '\u2014'
+        loc_display = data.get('location') or '\u2014'
         return (
-            f'קבע פגישה:\n'
-            f'\U0001f4c5 תאריך: {_format_date_he(target_date)}\n'
-            f'\U0001f550 שעה: {data["start"]}–{data["end"]}\n'
-            f'\U0001f4dd כותרת: {data["title"]}\n'
-            f'\U0001f4ac תיאור: {desc_display}\n'
-            f'\U0001f4cd מיקום: {loc_display}\n\n'
-            f'לאישור שלח: אשר\n'
-            f'לביטול שלח: בטל'
+            '\u05e7\u05d1\u05e2 \u05e4\u05d2\u05d9\u05e9\u05d4:\n'
+            f'\U0001f4c5 \u05ea\u05d0\u05e8\u05d9\u05da: {_format_date_he(target_date)}\n'
+            f'\U0001f550 \u05e9\u05e2\u05d4: {data["start"]}\u2013{data["end"]}\n'
+            f'\U0001f4dd \u05db\u05d5\u05ea\u05e8\u05ea: {data["title"]}\n'
+            f'\U0001f4ac \u05ea\u05d9\u05d0\u05d5\u05e8: {desc_display}\n'
+            f'\U0001f4cd \u05de\u05d9\u05e7\u05d5\u05dd: {loc_display}\n\n'
+            '\u05dc\u05d0\u05d9\u05e9\u05d5\u05e8 \u05e9\u05dc\u05d7: \u05d0\u05e9\u05e8\n'
+            '\u05dc\u05d1\u05d9\u05d8\u05d5\u05dc \u05e9\u05dc\u05d7: \u05d1\u05d8\u05dc'
         )
 
     # ----------------------------------------------------------------------- #
@@ -577,11 +571,14 @@ class WhatsAppWebhookView(APIView):
                     time_until = ev['start'] - now_local
                     minutes_until = int(time_until.total_seconds() / 60)
                     if minutes_until < 60:
-                        until_str = f'בעוד {minutes_until} דקות'
+                        until_str = f'\u05d1\u05e2\u05d5\u05d3 {minutes_until} \u05d3\u05e7\u05d5\u05ea'
                     elif minutes_until < 120:
-                        until_str = f'בעוד {minutes_until // 60} שעה {minutes_until % 60} דקות'
+                        until_str = (
+                            f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} '
+                            f'\u05e9\u05e2\u05d4 {minutes_until % 60} \u05d3\u05e7\u05d5\u05ea'
+                        )
                     else:
-                        until_str = f'בעוד {minutes_until // 60} שעות'
+                        until_str = f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} \u05e9\u05e2\u05d5\u05ea'
                     if days_offset == 0:
                         msg = s.NEXT_MEETING_PREFIX.format(
                             summary=ev['summary'], time=ev['start_str'], until=until_str)
@@ -619,12 +616,12 @@ class WhatsAppWebhookView(APIView):
                 slots = get_free_slots_for_date(from_number, d)
                 day_name = d.strftime('%A')
                 if slots is None:
-                    lines.append(f'{day_name}: שגיאה')
+                    lines.append(f'{day_name}: \u05e9\u05d2\u05d9\u05d0\u05d4')
                 elif not slots:
-                    lines.append(f'{day_name}: עמוס')
+                    lines.append(f'{day_name}: \u05e2\u05de\u05d5\u05e1')
                 else:
-                    slot_strs = [f'{sl["start"]}–{sl["end"]}' for sl in slots]
-                    lines.append(f'{day_name}: {chr(44).join(slot_strs)}')
+                    slot_strs = [f'{sl["start"]}\u2013{sl["end"]}' for sl in slots]
+                    lines.append(f'{day_name}: {", ".join(slot_strs)}')
             return _xml(s.FREE_SLOTS_HEADER + '\n' + '\n'.join(lines))
 
         target, label = resolve_day(period, today)
@@ -640,12 +637,12 @@ class WhatsAppWebhookView(APIView):
             h = sl['minutes'] // 60
             mn = sl['minutes'] % 60
             if h > 0 and mn > 0:
-                dur = f'{h}ש {mn}ד'
+                dur = f'{h}\u05e9 {mn}\u05d3'
             elif h > 0:
-                dur = f'{h} שעות'
+                dur = f'{h} \u05e9\u05e2\u05d5\u05ea'
             else:
-                dur = f'{sl["minutes"]} דקות'
-            lines.append(f'• {sl["start"]}–{sl["end"]} ({dur})')
+                dur = f'{sl["minutes"]} \u05d3\u05e7\u05d5\u05ea'
+            lines.append(f'\u2022 {sl["start"]}\u2013{sl["end"]} ({dur})')
         return _xml('\n'.join(lines))
 
     def _query_birthdays(self, from_number, period):
@@ -683,14 +680,14 @@ class WhatsAppWebhookView(APIView):
                 return _xml(s.NO_BIRTHDAYS_MONTH)
             lines = [s.BIRTHDAYS_MONTH_HEADER]
             for b in month_birthdays:
-                lines.append(f'• {b["summary"]} — {b["date"]}')
+                lines.append(f'\u2022 {b["summary"]} \u2014 {b["date"]}')
             return _xml('\n'.join(lines))
 
         if not birthdays:
             return _xml(s.NO_BIRTHDAYS)
         lines = [s.BIRTHDAYS_HEADER]
         for b in birthdays:
-            lines.append(f'• {b["summary"]} — {b["date"]}')
+            lines.append(f'\u2022 {b["summary"]} \u2014 {b["date"]}')
         return _xml('\n'.join(lines))
 
     # ----------------------------------------------------------------------- #
@@ -711,7 +708,12 @@ class WhatsAppWebhookView(APIView):
 
         deleted, _ = CalendarToken.objects.filter(phone_number=from_number).delete()
         logger.info('Calendar disconnected for phone=%s (deleted %d tokens)', from_number, deleted)
-        return _xml(נותק + '\n' + s.MAIN_MENU_TEXT)
+        # Compose a Hebrew disconnect confirmation message
+        msg = (
+            '\u2705 \u05d4\u05d9\u05d5\u05de\u05df \u05e0\u05d5\u05ea\u05e7.\n\n'
+            + s.MAIN_MENU_TEXT
+        )
+        return _xml(msg)
 
     def _handle_connect_calendar(self, request, from_number):
         import apps.standup.strings_he as s
@@ -771,9 +773,9 @@ class WhatsAppWebhookView(APIView):
 
         resp = MessagingResponse()
         if not entries.exists():
-            resp.message('אין רשומות שבוע זה.')
+            resp.message('\u05d0\u05d9\u05df \u05e8\u05e9\u05d5\u05de\u05d5\u05ea \u05e9\u05d1\u05d5\u05e2 \u05d6\u05d4.')
         else:
-            lines = [f'סיכום שבוע {current_week}:\n']
+            lines = [f'\u05e1\u05d9\u05db\u05d5\u05dd \u05e9\u05d1\u05d5\u05e2 {current_week}:\n']
             for entry in entries:
                 date_str = entry.created_at.strftime('%Y-%m-%d')
                 lines.append(f'{date_str}: {entry.message}')
@@ -781,7 +783,7 @@ class WhatsAppWebhookView(APIView):
         return HttpResponse(str(resp), content_type='application/xml')
 
     # ----------------------------------------------------------------------- #
-    # Back-compat stubs
+    # Back-compat stubs (used by existing tests)
     # ----------------------------------------------------------------------- #
 
     def _try_day_query(self, from_number, body_lower, exclude_birthdays=False):
@@ -789,20 +791,20 @@ class WhatsAppWebhookView(APIView):
         return self._query_meetings(from_number, body_lower)
 
     def _try_next_meeting(self, from_number):
-        """Kept for backward-compat."""
+        """Kept for backward-compat with existing tests."""
         return self._query_next_meeting(from_number)
 
     def _try_free_today(self, from_number):
-        """Kept for backward-compat."""
+        """Kept for backward-compat with existing tests."""
         return self._query_free_time(from_number, 'today')
 
     def _try_birthdays_next_week(self, from_number):
-        """Kept for backward-compat."""
+        """Kept for backward-compat with existing tests."""
         return self._query_birthdays(from_number, 'week')
 
 
 # --------------------------------------------------------------------------- #
-# Keep old parse helper so existing task/digest code keeps working
+# Legacy digest-time parser (used by tasks.py)
 # --------------------------------------------------------------------------- #
 
 def _parse_digest_time(arg):
