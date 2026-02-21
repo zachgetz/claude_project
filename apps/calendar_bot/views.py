@@ -134,8 +134,24 @@ class CalendarAuthCallbackView(View):
         request.session.pop('oauth_state', None)
         request.session.pop('oauth_label', None)
 
+        # Send WhatsApp confirmation
+        try:
+            from twilio.rest import Client
+            from django.conf import settings as django_settings
+            client = Client(django_settings.TWILIO_ACCOUNT_SID, django_settings.TWILIO_AUTH_TOKEN)
+            client.messages.create(
+                from_=f'whatsapp:{django_settings.TWILIO_WHATSAPP_NUMBER}',
+                to=f'whatsapp:{phone}',
+                body='\u2705 Google Calendar connected! Send *0* for the menu.',
+            )
+            logger.info('Sent WhatsApp confirmation after OAuth for phone=%s', phone)
+        except Exception as exc:
+            logger.warning('Could not send WhatsApp confirmation for phone=%s: %s', phone, exc)
+
         return HttpResponse(
-            '<h1>Connected!</h1><p>Your Google Calendar is now linked to the WhatsApp bot.</p>',
+            '<h1>Connected!</h1>'
+            '<p>Your Google Calendar is now linked to the WhatsApp bot.</p>'
+            '<p>Check WhatsApp \u2014 you should receive a confirmation message. You can close this tab.</p>',
             content_type='text/html',
         )
 
