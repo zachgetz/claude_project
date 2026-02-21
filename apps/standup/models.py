@@ -1,5 +1,6 @@
-import datetime
 from django.db import models
+from django.utils import timezone
+
 
 class StandupEntry(models.Model):
     phone_number = models.CharField(max_length=20)
@@ -9,7 +10,7 @@ class StandupEntry(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.pk and not self.week_number:
-            self.week_number = datetime.datetime.now().isocalendar()[1]
+            self.week_number = timezone.now().isocalendar()[1]
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -18,3 +19,9 @@ class StandupEntry(models.Model):
     class Meta:
         ordering = ['-created_at']
         verbose_name_plural = 'Standup Entries'
+        indexes = [
+            models.Index(fields=['phone_number'], name='standup_phone_idx'),
+            models.Index(fields=['week_number'], name='standup_week_idx'),
+            models.Index(fields=['created_at'], name='standup_created_idx'),
+            models.Index(fields=['phone_number', 'week_number'], name='standup_phone_week_idx'),
+        ]
