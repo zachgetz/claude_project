@@ -532,7 +532,9 @@ class WhatsAppWebhookView(APIView):
         target, label = resolve_day(period, today)
 
         if target == 'week':
-            week_start = today - datetime.timedelta(days=today.weekday())
+            # Israeli calendar: week starts on Sunday
+            # (today.weekday() + 1) % 7 gives days since last Sunday
+            week_start = today - datetime.timedelta(days=(today.weekday() + 1) % 7)
             week_end = week_start + datetime.timedelta(days=6)
             week_events = {}
             current = week_start
@@ -582,14 +584,18 @@ class WhatsAppWebhookView(APIView):
                     time_until = ev['start'] - now_local
                     minutes_until = int(time_until.total_seconds() / 60)
                     if minutes_until < 60:
-                        until_str = f'\u05d1\u05e2\u05d5\u05d3 {minutes_until} \u05d3\u05e7\u05d5\u05ea'
+                        until_str = (
+                            f'\u05d1\u05e2\u05d5\u05d3 {minutes_until} \u05d3\u05e7\u05d5\u05ea'
+                        )
                     elif minutes_until < 120:
                         until_str = (
                             f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} '
                             f'\u05e9\u05e2\u05d4 {minutes_until % 60} \u05d3\u05e7\u05d5\u05ea'
                         )
                     else:
-                        until_str = f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} \u05e9\u05e2\u05d5\u05ea'
+                        until_str = (
+                            f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} \u05e9\u05e2\u05d5\u05ea'
+                        )
                     if days_offset == 0:
                         msg = s.NEXT_MEETING_PREFIX.format(
                             summary=ev['summary'], time=ev['start_str'], until=until_str)
@@ -620,7 +626,8 @@ class WhatsAppWebhookView(APIView):
         today = datetime.datetime.now(tz=user_tz).date()
 
         if period == 'this week':
-            week_start = today - datetime.timedelta(days=today.weekday())
+            # Israeli calendar: week starts on Sunday
+            week_start = today - datetime.timedelta(days=(today.weekday() + 1) % 7)
             lines = []
             for i in range(7):
                 d = week_start + datetime.timedelta(days=i)
