@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
     operations = [
         # 1. Add token FK to CalendarEventSnapshot (nullable)
         migrations.AddField(
-            model_name='calendarevent_snapshot',
+            model_name='calendareventsnapshot',
             name='token',
             field=models.ForeignKey(
                 null=True,
@@ -33,12 +33,12 @@ class Migration(migrations.Migration):
         ),
         # 3. First drop old unique_together on CalendarEventSnapshot
         migrations.AlterUniqueTogether(
-            name='calendarevent_snapshot',
+            name='calendareventsnapshot',
             unique_together=set(),
         ),
         # 4. Then add new unique_together including token
         migrations.AlterUniqueTogether(
-            name='calendarevent_snapshot',
+            name='calendareventsnapshot',
             unique_together={('phone_number', 'token', 'event_id')},
         ),
     ]
