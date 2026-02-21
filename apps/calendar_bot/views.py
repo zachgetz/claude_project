@@ -47,6 +47,12 @@ class CalendarAuthCallbackView(View):
         if not phone:
             return HttpResponse('Session expired. Please restart OAuth flow.', status=400)
 
+        # CSRF state validation: ensure the returned state matches what we stored
+        returned_state = request.GET.get('state', '')
+        expected_state = request.session.get('oauth_state', '')
+        if not returned_state or returned_state != expected_state:
+            return HttpResponse('Invalid state parameter.', status=400)
+
         redirect_uri = request.build_absolute_uri('/calendar/auth/callback/')
         flow = get_oauth_flow(redirect_uri=redirect_uri)
 
