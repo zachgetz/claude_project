@@ -302,11 +302,11 @@ class DigitRoutingTests(TestCase):
     # ------------------------------------------------------------------
 
     def test_meetings_digit_1_routes_to_today_query(self):
-        """In meetings_menu, digit '1' calls _query_meetings with 'today'."""
+        """In meetings_menu, digit '1' calls _query_meetings_msg with 'today'."""
         self._set_state('meetings_menu')
         with patch(
-            'apps.standup.views.WhatsAppWebhookView._query_meetings',
-            return_value=self._make_xml('today meetings'),
+            'apps.standup.views.WhatsAppWebhookView._query_meetings_msg',
+            return_value='today meetings',
         ) as mock_q:
             response = self._post('1')
             mock_q.assert_called_once_with(PHONE, 'today')
@@ -314,31 +314,31 @@ class DigitRoutingTests(TestCase):
         self.assertEqual(StandupEntry.objects.count(), 0)
 
     def test_meetings_digit_2_routes_to_tomorrow_query(self):
-        """In meetings_menu, digit '2' calls _query_meetings with 'tomorrow'."""
+        """In meetings_menu, digit '2' calls _query_meetings_msg with 'tomorrow'."""
         self._set_state('meetings_menu')
         with patch(
-            'apps.standup.views.WhatsAppWebhookView._query_meetings',
-            return_value=self._make_xml('tomorrow meetings'),
+            'apps.standup.views.WhatsAppWebhookView._query_meetings_msg',
+            return_value='tomorrow meetings',
         ) as mock_q:
             self._post('2')
             mock_q.assert_called_once_with(PHONE, 'tomorrow')
 
     def test_meetings_digit_3_routes_to_week_query(self):
-        """In meetings_menu, digit '3' calls _query_meetings with 'this week'."""
+        """In meetings_menu, digit '3' calls _query_meetings_msg with 'this week'."""
         self._set_state('meetings_menu')
         with patch(
-            'apps.standup.views.WhatsAppWebhookView._query_meetings',
-            return_value=self._make_xml('week meetings'),
+            'apps.standup.views.WhatsAppWebhookView._query_meetings_msg',
+            return_value='week meetings',
         ) as mock_q:
             self._post('3')
             mock_q.assert_called_once_with(PHONE, 'this week')
 
     def test_meetings_digit_4_routes_to_next_meeting(self):
-        """In meetings_menu, digit '4' calls _query_next_meeting."""
+        """In meetings_menu, digit '4' calls _query_next_meeting_msg."""
         self._set_state('meetings_menu')
         with patch(
-            'apps.standup.views.WhatsAppWebhookView._query_next_meeting',
-            return_value=self._make_xml('next meeting'),
+            'apps.standup.views.WhatsAppWebhookView._query_next_meeting_msg',
+            return_value='next meeting',
         ) as mock_q:
             self._post('4')
             mock_q.assert_called_once_with(PHONE)
@@ -367,11 +367,11 @@ class DigitRoutingTests(TestCase):
     # ------------------------------------------------------------------
 
     def test_free_time_digit_1_routes_to_today_free_time(self):
-        """In free_time_menu, digit '1' calls _query_free_time with 'today'."""
+        """In free_time_menu, digit '1' calls _query_free_time_msg with 'today'."""
         self._set_state('free_time_menu')
         with patch(
-            'apps.standup.views.WhatsAppWebhookView._query_free_time',
-            return_value=self._make_xml('free time today'),
+            'apps.standup.views.WhatsAppWebhookView._query_free_time_msg',
+            return_value='free time today',
         ) as mock_q:
             self._post('1')
             mock_q.assert_called_once_with(PHONE, 'today')

@@ -175,7 +175,7 @@ class MenuDrivenUITests(TestCase):
         self.assertEqual(state.pending_action, 'main_menu')
 
     def test_meetings_submenu_digit_1_queries_today(self):
-        """Meetings submenu '1' calls _query_meetings with 'today'."""
+        """Meetings submenu '1' calls _query_meetings_msg with 'today'."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='meetings_menu',
@@ -184,15 +184,15 @@ class MenuDrivenUITests(TestCase):
         )
         with patch.object(
             __import__('apps.standup.views', fromlist=['WhatsAppWebhookView']).WhatsAppWebhookView,
-            '_query_meetings',
-            return_value=self._make_xml('today meetings'),
+            '_query_meetings_msg',
+            return_value='today meetings',
         ) as mock_q:
             response = self._post('1')
             mock_q.assert_called_once_with(PHONE, 'today')
         self.assertEqual(response.status_code, 200)
 
     def test_meetings_submenu_digit_4_queries_next_meeting(self):
-        """Meetings submenu '4' calls _query_next_meeting."""
+        """Meetings submenu '4' calls _query_next_meeting_msg."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='meetings_menu',
@@ -201,8 +201,8 @@ class MenuDrivenUITests(TestCase):
         )
         with patch.object(
             __import__('apps.standup.views', fromlist=['WhatsAppWebhookView']).WhatsAppWebhookView,
-            '_query_next_meeting',
-            return_value=self._make_xml('next meeting'),
+            '_query_next_meeting_msg',
+            return_value='next meeting',
         ) as mock_q:
             response = self._post('4')
             mock_q.assert_called_once_with(PHONE)

@@ -11,6 +11,10 @@ State machine:
 
 All bot response text is 100% Hebrew. Only exception: user-provided content
 (e.g. event title typed in English).
+
+TZA-121: After returning a result from a meetings/free-time/birthdays submenu
+selection, keep pending_action set to the current submenu state and re-display
+the submenu options. Only clear submenu state when user sends 0 or בטל.
 """
 import datetime
 import logging
@@ -291,17 +295,21 @@ class WhatsAppWebhookView(APIView):
                 _set_state(from_number, 'main_menu', 1, {})
                 return _xml(s.MAIN_MENU_TEXT)
             if digit == '1':
-                _clear_state(from_number)
-                return self._query_meetings(from_number, 'today')
+                _set_state(from_number, 'meetings_menu', 1, {})
+                msg = self._query_meetings_msg(from_number, 'today')
+                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
             if digit == '2':
-                _clear_state(from_number)
-                return self._query_meetings(from_number, 'tomorrow')
+                _set_state(from_number, 'meetings_menu', 1, {})
+                msg = self._query_meetings_msg(from_number, 'tomorrow')
+                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
             if digit == '3':
-                _clear_state(from_number)
-                return self._query_meetings(from_number, 'this week')
+                _set_state(from_number, 'meetings_menu', 1, {})
+                msg = self._query_meetings_msg(from_number, 'this week')
+                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
             if digit == '4':
-                _clear_state(from_number)
-                return self._query_next_meeting(from_number)
+                _set_state(from_number, 'meetings_menu', 1, {})
+                msg = self._query_next_meeting_msg(from_number)
+                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
             return _xml(s.INVALID_OPTION + '\n' + s.MEETINGS_MENU_TEXT)
 
         # ---- Free time submenu ------------------------------------------- #
@@ -310,9 +318,10 @@ class WhatsAppWebhookView(APIView):
                 _set_state(from_number, 'main_menu', 1, {})
                 return _xml(s.MAIN_MENU_TEXT)
             if digit in ('1', '2', '3'):
-                _clear_state(from_number)
+                _set_state(from_number, 'free_time_menu', 1, {})
                 day_map = {'1': 'today', '2': 'tomorrow', '3': 'this week'}
-                return self._query_free_time(from_number, day_map[digit])
+                msg = self._query_free_time_msg(from_number, day_map[digit])
+                return _xml(msg + '\n\n' + s.FREE_TIME_MENU_TEXT)
             return _xml(s.INVALID_OPTION + '\n' + s.FREE_TIME_MENU_TEXT)
 
         # ---- Birthdays submenu ------------------------------------------- #
@@ -321,11 +330,13 @@ class WhatsAppWebhookView(APIView):
                 _set_state(from_number, 'main_menu', 1, {})
                 return _xml(s.MAIN_MENU_TEXT)
             if digit == '1':
-                _clear_state(from_number)
-                return self._query_birthdays(from_number, 'week')
+                _set_state(from_number, 'birthdays_menu', 1, {})
+                msg = self._query_birthdays_msg(from_number, 'week')
+                return _xml(msg + '\n\n' + s.BIRTHDAYS_MENU_TEXT)
             if digit == '2':
-                _clear_state(from_number)
-                return self._query_birthdays(from_number, 'month')
+                _set_state(from_number, 'birthdays_menu', 1, {})
+                msg = self._query_birthdays_msg(from_number, 'month')
+                return _xml(msg + '\n\n' + s.BIRTHDAYS_MENU_TEXT)
             return _xml(s.INVALID_OPTION + '\n' + s.BIRTHDAYS_MENU_TEXT)
 
         # ---- Settings submenu -------------------------------------------- #
@@ -516,10 +527,13 @@ class WhatsAppWebhookView(APIView):
         )
 
     # ----------------------------------------------------------------------- #
-    # Calendar query helpers
+    # Calendar query helpers — message-string variants (TZA-121)
+    # These return a plain string (not wrapped in _xml) so callers can append
+    # submenu text before wrapping in _xml.
     # ----------------------------------------------------------------------- #
 
-    def _query_meetings(self, from_number, period):
+    def _query_meetings_msg(self, from_number, period):
+        """Return the meetings query result as a plain string."""
         import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
@@ -529,7 +543,7 @@ class WhatsAppWebhookView(APIView):
             phone_number=from_number
         ).order_by('created_at').first()
         if token is None or not token.access_token:
-            return _xml(s.NO_CALENDAR_CONNECTED)
+            return s.NO_CALENDAR_CONNECTED
 
         user_tz = get_user_tz(from_number)
         today = datetime.datetime.now(tz=user_tz).date()
@@ -549,18 +563,17 @@ class WhatsAppWebhookView(APIView):
                     evs = []
                 week_events[current] = evs
                 current += datetime.timedelta(days=1)
-            msg = format_week_view(week_events, week_start, week_end)
+            return format_week_view(week_events, week_start, week_end)
         else:
             try:
                 events = get_events_for_date(from_number, target, exclude_birthdays=True)
             except Exception:
                 logger.exception('Calendar API error: phone=%s', from_number)
-                return _xml(s.CALENDAR_FETCH_ERROR)
-            msg = format_events_for_day(events, label)
+                return s.CALENDAR_FETCH_ERROR
+            return format_events_for_day(events, label)
 
-        return _xml(msg)
-
-    def _query_next_meeting(self, from_number):
+    def _query_next_meeting_msg(self, from_number):
+        """Return the next-meeting query result as a plain string."""
         import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
@@ -569,7 +582,7 @@ class WhatsAppWebhookView(APIView):
             phone_number=from_number
         ).order_by('created_at').first()
         if token is None or not token.access_token:
-            return _xml(s.NO_CALENDAR_CONNECTED)
+            return s.NO_CALENDAR_CONNECTED
 
         user_tz = get_user_tz(from_number)
         now_local = datetime.datetime.now(tz=user_tz)
@@ -601,20 +614,20 @@ class WhatsAppWebhookView(APIView):
                             f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} \u05e9\u05e2\u05d5\u05ea'
                         )
                     if days_offset == 0:
-                        msg = s.NEXT_MEETING_PREFIX.format(
+                        return s.NEXT_MEETING_PREFIX.format(
                             summary=ev['summary'], time=ev['start_str'], until=until_str)
                     elif days_offset == 1:
-                        msg = s.NEXT_MEETING_TOMORROW.format(
+                        return s.NEXT_MEETING_TOMORROW.format(
                             time=ev['start_str'], summary=ev['summary'])
                     else:
                         day_label = ev['start'].strftime('%A, %b %-d')
-                        msg = s.NEXT_MEETING_FUTURE.format(
+                        return s.NEXT_MEETING_FUTURE.format(
                             time=ev['start_str'], summary=ev['summary'], day=day_label)
-                    return _xml(msg)
 
-        return _xml(s.NO_MEETINGS_WEEK)
+        return s.NO_MEETINGS_WEEK
 
-    def _query_free_time(self, from_number, period):
+    def _query_free_time_msg(self, from_number, period):
+        """Return the free-time query result as a plain string."""
         import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken
         from apps.calendar_bot.calendar_service import get_user_tz, get_free_slots_for_date
@@ -624,7 +637,7 @@ class WhatsAppWebhookView(APIView):
             phone_number=from_number
         ).order_by('created_at').first()
         if token is None or not token.access_token:
-            return _xml(s.NO_CALENDAR_CONNECTED)
+            return s.NO_CALENDAR_CONNECTED
 
         user_tz = get_user_tz(from_number)
         today = datetime.datetime.now(tz=user_tz).date()
@@ -644,15 +657,15 @@ class WhatsAppWebhookView(APIView):
                 else:
                     slot_strs = [f'{sl["start"]}\u2013{sl["end"]}' for sl in slots]
                     lines.append(f'{day_name}: {", ".join(slot_strs)}')
-            return _xml(s.FREE_SLOTS_HEADER + '\n' + '\n'.join(lines))
+            return s.FREE_SLOTS_HEADER + '\n' + '\n'.join(lines)
 
         target, label = resolve_day(period, today)
         slots = get_free_slots_for_date(from_number, target)
 
         if slots is None:
-            return _xml(s.CALENDAR_FETCH_ERROR)
+            return s.CALENDAR_FETCH_ERROR
         if not slots:
-            return _xml(s.FREE_TODAY_PACKED)
+            return s.FREE_TODAY_PACKED
 
         lines = [s.FREE_SLOTS_HEADER]
         for sl in slots:
@@ -665,9 +678,10 @@ class WhatsAppWebhookView(APIView):
             else:
                 dur = f'{sl["minutes"]} \u05d3\u05e7\u05d5\u05ea'
             lines.append(f'\u2022 {sl["start"]}\u2013{sl["end"]} ({dur})')
-        return _xml('\n'.join(lines))
+        return '\n'.join(lines)
 
-    def _query_birthdays(self, from_number, period):
+    def _query_birthdays_msg(self, from_number, period):
+        """Return the birthdays query result as a plain string."""
         import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken
         from apps.calendar_bot.calendar_service import get_birthdays_next_week, get_user_tz
@@ -676,7 +690,7 @@ class WhatsAppWebhookView(APIView):
             phone_number=from_number
         ).order_by('created_at').first()
         if token is None or not token.access_token:
-            return _xml(s.NO_CALENDAR_CONNECTED)
+            return s.NO_CALENDAR_CONNECTED
 
         user_tz = get_user_tz(from_number)
 
@@ -684,7 +698,7 @@ class WhatsAppWebhookView(APIView):
             birthdays = get_birthdays_next_week(from_number)
         except Exception:
             logger.exception('Error fetching birthdays for phone=%s', from_number)
-            return _xml(s.BIRTHDAYS_FETCH_ERROR)
+            return s.BIRTHDAYS_FETCH_ERROR
 
         if period == 'month':
             now_local = datetime.datetime.now(tz=user_tz)
@@ -699,18 +713,36 @@ class WhatsAppWebhookView(APIView):
                 except (ValueError, TypeError):
                     pass
             if not month_birthdays:
-                return _xml(s.NO_BIRTHDAYS_MONTH)
+                return s.NO_BIRTHDAYS_MONTH
             lines = [s.BIRTHDAYS_MONTH_HEADER]
             for b in month_birthdays:
                 lines.append(f'\u2022 {b["summary"]} \u2014 {b["date"]}')
-            return _xml('\n'.join(lines))
+            return '\n'.join(lines)
 
         if not birthdays:
-            return _xml(s.NO_BIRTHDAYS)
+            return s.NO_BIRTHDAYS
         lines = [s.BIRTHDAYS_HEADER]
         for b in birthdays:
             lines.append(f'\u2022 {b["summary"]} \u2014 {b["date"]}')
-        return _xml('\n'.join(lines))
+        return '\n'.join(lines)
+
+    # ----------------------------------------------------------------------- #
+    # Calendar query helpers — HttpResponse variants (back-compat)
+    # These delegate to the _msg variants above and wrap in _xml().
+    # Existing tests that mock _query_meetings etc. continue to work.
+    # ----------------------------------------------------------------------- #
+
+    def _query_meetings(self, from_number, period):
+        return _xml(self._query_meetings_msg(from_number, period))
+
+    def _query_next_meeting(self, from_number):
+        return _xml(self._query_next_meeting_msg(from_number))
+
+    def _query_free_time(self, from_number, period):
+        return _xml(self._query_free_time_msg(from_number, period))
+
+    def _query_birthdays(self, from_number, period):
+        return _xml(self._query_birthdays_msg(from_number, period))
 
     # ----------------------------------------------------------------------- #
     # Settings actions
