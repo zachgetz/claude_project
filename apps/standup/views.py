@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 NEXT_MEETING_TRIGGERS = {'next meeting', 'next', "what's next", 'whats next'}
 FREE_TODAY_TRIGGERS = {'free today', 'am i free', 'free time', 'when am i free'}
 HELP_TRIGGERS = {'help', '?', '/help'}
+MENU_TRIGGERS = {'menu', 'options', 'calendar'}
 
 WORKDAY_START_HOUR = 8
 WORKDAY_END_HOUR = 19
@@ -42,6 +43,19 @@ HELP_TEXT = (
     "I'll also alert you when meetings are rescheduled or cancelled."
 )
 
+MENU_TEXT = (
+    "\U0001f4cb Calendar Menu:\n"
+    "\n"
+    "1. Today's events\n"
+    "2. Tomorrow's events\n"
+    "3. This week's events\n"
+    "4. Next meeting\n"
+    "5. Free slots today\n"
+    "6. Help\n"
+    "\n"
+    "Reply with a number (1-6) to select an option."
+)
+
 
 class WhatsAppWebhookView(APIView):
     permission_classes = [TwilioSignaturePermission]
@@ -67,6 +81,11 @@ class WhatsAppWebhookView(APIView):
         if body_lower in HELP_TRIGGERS:
             logger.info('Routing to help handler: phone=%s', from_number)
             return self._handle_help()
+
+        # Handle menu command
+        if body_lower in MENU_TRIGGERS:
+            logger.info('Routing to menu handler: phone=%s', from_number)
+            return self._handle_menu()
 
         # Handle set timezone command
         if body_lower.startswith('set timezone '):
@@ -207,12 +226,17 @@ class WhatsAppWebhookView(APIView):
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
-    # Help and onboarding
+    # Help, menu, and onboarding
     # ------------------------------------------------------------------ #
 
     def _handle_help(self):
         response = MessagingResponse()
         response.message(HELP_TEXT)
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_menu(self):
+        response = MessagingResponse()
+        response.message(MENU_TEXT)
         return HttpResponse(str(response), content_type='application/xml')
 
     def _maybe_onboarding(self, request, from_number):
