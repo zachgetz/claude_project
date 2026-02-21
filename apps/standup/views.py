@@ -223,6 +223,14 @@ class WhatsAppWebhookView(APIView):
         # Default to Hebrew for now (English i18n can be added later)
         return strings_he
 
+    def _get_user_name(self, phone_number):
+        """Return stored name for the user, or empty string."""
+        from apps.calendar_bot.models import CalendarToken
+        token = CalendarToken.objects.filter(
+            phone_number=phone_number
+        ).order_by('created_at').first()
+        return getattr(token, 'name', '') or ''
+
     # ------------------------------------------------------------------ #
     # Multi-account calendar commands
     # ------------------------------------------------------------------ #
@@ -356,6 +364,10 @@ class WhatsAppWebhookView(APIView):
     def _handle_menu(self, phone_number=None):
         s = self._get_strings(phone_number) if phone_number else None
         text = s.MENU_TEXT if s else MENU_TEXT
+        if phone_number:
+            name = self._get_user_name(phone_number)
+            if name:
+                text = f"\u05d4\u05d9\u05d9 {name}! \U0001f44b\n\n" + text
         response = MessagingResponse()
         response.message(text)
         return HttpResponse(str(response), content_type='application/xml')
