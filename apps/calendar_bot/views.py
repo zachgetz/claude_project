@@ -53,6 +53,17 @@ class CalendarAuthCallbackView(View):
     """
 
     def get(self, request):
+        error = request.GET.get('error')
+        if error:
+            logger.warning('OAuth callback received error: %s', error)
+            return HttpResponse(
+                '<h1>Authorization failed</h1>'
+                f'<p>Google returned an error: <code>{error}</code></p>'
+                '<p>Please go back to WhatsApp and send <strong>connect calendar</strong> to try again.</p>',
+                content_type='text/html',
+                status=400,
+            )
+
         phone = request.session.get('oauth_phone')
         if not phone:
             return HttpResponse('Session expired. Please restart OAuth flow.', status=400)
