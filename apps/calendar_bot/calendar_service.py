@@ -151,7 +151,10 @@ def sync_calendar_snapshot(phone_number, send_alerts=True):
             'end_time': end_dt.astimezone(pytz.UTC),
         }
 
-    # Load existing snapshots for this user (filtered to next 7 days window)
+    # Load existing snapshots for this user, scoped to the same 7-day window.
+    # This avoids pulling ALL snapshots for the user (N+1 problem): a user with
+    # months of history could have thousands of rows, but we only need the ones
+    # that fall within [time_min, time_max] to perform the diff correctly.
     existing_snapshots = {
         snap.event_id: snap
         for snap in CalendarEventSnapshot.objects.filter(
@@ -473,7 +476,7 @@ def _parse_time_range(time_str):
     time_str = time_str.lower().strip()
 
     # Split on '-' that separates two time parts
-    pattern = r'^(\d{1,2}(?::\d{2})?(?:am|pm)?)-((\d{1,2})(?::\d{2})?(?:am|pm)?)$'
+    pattern = r'^(\d{1,2}(?::\d{2})?(?:am|pm)?)-((\\d{1,2})(?::\d{2})?(?:am|pm)?)$'
     m = re.match(pattern, time_str, re.IGNORECASE)
     if not m:
         return None
