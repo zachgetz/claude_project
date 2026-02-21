@@ -16,6 +16,8 @@ def get_calendar_service(phone_number):
     Load the CalendarToken for phone_number, refresh if expired, and
     return a Google Calendar API service client.
     """
+    logger.info('get_calendar_service called: phone=%s', phone_number)
+
     token = CalendarToken.objects.get(phone_number=phone_number)
 
     creds = Credentials(
@@ -29,11 +31,25 @@ def get_calendar_service(phone_number):
     # Refresh if token is not valid (handles token_expiry=None safely)
     if not creds.valid:
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            logger.info('Refreshing expired access token for phone=%s', phone_number)
+            try:
+                creds.refresh(Request())
+            except Exception:
+                logger.exception('Failed to refresh access token for phone=%s', phone_number)
+                raise
             token.access_token = creds.token
             if creds.expiry:
                 token.token_expiry = creds.expiry.replace(tzinfo=pytz.UTC)
             token.save()
+            logger.info('Access token refreshed and saved for phone=%s', phone_number)
+        else:
+            logger.warning(
+                'Token invalid but cannot refresh for phone=%s '
+                '(expired=%s has_refresh_token=%s)',
+                phone_number,
+                creds.expired,
+                bool(creds.refresh_token),
+            )
 
     return build('calendar', 'v3', credentials=creds)
 
@@ -58,20 +74,42 @@ def get_events_for_date(phone_number, target_date):
     date (datetime.date) in the user's local timezone.
     Returns a list of event dicts with 'start', 'summary', 'end' keys.
     """
+    logger.info(
+        'get_events_for_date called: phone=%s date=%s',
+        phone_number,
+        target_date,
+    )
+
     user_tz = get_user_tz(phone_number)
-    service = get_calendar_service(phone_number)
+    try:
+        service = get_calendar_service(phone_number)
+    except Exception:
+        logger.exception(
+            'Failed to get calendar service in get_events_for_date: phone=%s date=%s',
+            phone_number,
+            target_date,
+        )
+        raise
 
     # Build timezone-aware start/end for the day
     day_start = user_tz.localize(datetime.datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0))
     day_end = user_tz.localize(datetime.datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59))
 
-    events_result = service.events().list(
-        calendarId='primary',
-        timeMin=day_start.isoformat(),
-        timeMax=day_end.isoformat(),
-        singleEvents=True,
-        orderBy='startTime',
-    ).execute()
+    try:
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime',
+        ).execute()
+    except Exception:
+        logger.exception(
+            'Google Calendar API error in get_events_for_date: phone=%s date=%s',
+            phone_number,
+            target_date,
+        )
+        raise
 
     events = []
     for item in events_result.get('items', []):
@@ -99,6 +137,13 @@ def get_events_for_date(phone_number, target_date):
                 'end': end_raw.get('date'),
                 'raw': item,
             })
+
+    logger.info(
+        'get_events_for_date result: phone=%s date=%s events_returned=%d',
+        phone_number,
+        target_date,
+        len(events),
+    )
     return events
 
 
@@ -113,19 +158,33 @@ def sync_calendar_snapshot(phone_number, send_alerts=True):
     now = datetime.datetime.now(tz=pytz.UTC)
     debounce_cutoff = now - datetime.timedelta(minutes=5)
 
-    service = get_calendar_service(phone_number)
+    try:
+        service = get_calendar_service(phone_number)
+    except Exception:
+        logger.exception(
+            'Failed to get calendar service in sync_calendar_snapshot: phone=%s',
+            phone_number,
+        )
+        raise
 
     # Fetch events for next 7 days
     time_min = now
     time_max = now + datetime.timedelta(days=7)
 
-    events_result = service.events().list(
-        calendarId='primary',
-        timeMin=time_min.isoformat(),
-        timeMax=time_max.isoformat(),
-        singleEvents=True,
-        orderBy='startTime',
-    ).execute()
+    try:
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=time_min.isoformat(),
+            timeMax=time_max.isoformat(),
+            singleEvents=True,
+            orderBy='startTime',
+        ).execute()
+    except Exception:
+        logger.exception(
+            'Google Calendar API error in sync_calendar_snapshot: phone=%s',
+            phone_number,
+        )
+        raise
 
     # Build a dict of current events from Google {event_id -> event_item}
     current_events = {}
@@ -254,9 +313,12 @@ def handle_block_command(phone_number, body):
     """
     from .models import PendingBlockConfirmation
 
+    logger.info('handle_block_command called: phone=%s body=%.80r', phone_number, body)
+
     # Parse the command
     parsed = _parse_block_command(body)
     if parsed is None:
+        logger.warning('Failed to parse block command: phone=%s body=%.80r', phone_number, body)
         return (
             'Could not parse your block command.\n'
             'Try: "block tomorrow 2-4pm" or "block friday 10am-12pm deep work"'
@@ -267,9 +329,26 @@ def handle_block_command(phone_number, body):
     now_local = datetime.datetime.now(tz=user_tz)
     today = now_local.date()
 
+    logger.info(
+        'Block command parsed: phone=%s date=%s time=%02d:%02d-%02d:%02d title=%r',
+        phone_number,
+        target_date,
+        start_hour,
+        start_min,
+        end_hour,
+        end_min,
+        title,
+    )
+
     # Enforce: only within next 7 days
     delta = (target_date - today).days
     if delta < 0 or delta > 7:
+        logger.warning(
+            'Block command date out of range: phone=%s date=%s delta=%d',
+            phone_number,
+            target_date,
+            delta,
+        )
         return 'You can only block time within the next 7 days.'
 
     # Build timezone-aware start/end datetimes
@@ -281,6 +360,12 @@ def handle_block_command(phone_number, body):
     )
 
     if end_dt_local <= start_dt_local:
+        logger.warning(
+            'Block command end time before start: phone=%s start=%s end=%s',
+            phone_number,
+            start_dt_local,
+            end_dt_local,
+        )
         return 'End time must be after start time.'
 
     # Check for conflicts
@@ -298,8 +383,15 @@ def handle_block_command(phone_number, body):
             if 'dateTime' in item.get('start', {})
         ]
     except Exception:
-        logger.exception('Calendar API error checking conflicts for %s', phone_number)
+        logger.exception('Calendar API error checking conflicts for phone=%s', phone_number)
         return 'Could not check your calendar right now. Please try again later.'
+
+    logger.info(
+        'Conflict check: phone=%s date=%s conflicts=%d',
+        phone_number,
+        target_date,
+        len(conflicts),
+    )
 
     event_data = {
         'date': target_date.isoformat(),
@@ -319,6 +411,10 @@ def handle_block_command(phone_number, body):
             f'"{ c.get("summary", "(No title)")}"' for c in conflicts[:3]
         )
         time_range = f'{start_hour:02d}:{start_min:02d}-{end_hour:02d}:{end_min:02d}'
+        logger.info(
+            'Block command stored as pending confirmation due to conflict: phone=%s',
+            phone_number,
+        )
         return (
             f'\u26a0\ufe0f Conflict detected: {conflict_names} overlaps with '
             f'{time_range} on {target_date.strftime("%A, %b %d")}.\n'
@@ -339,15 +435,19 @@ def confirm_block_command(phone_number):
     from django.utils import timezone as tz
     import datetime as dt
 
+    logger.info('confirm_block_command called: phone=%s', phone_number)
+
     try:
         pending = PendingBlockConfirmation.objects.get(phone_number=phone_number)
     except PendingBlockConfirmation.DoesNotExist:
+        logger.warning('confirm_block_command: no pending confirmation for phone=%s', phone_number)
         return 'No pending block to confirm.'
 
     # Enforce 10-minute expiry window using pending_at (set when the record was created).
     # If the user waits more than 10 minutes to reply YES, they must re-send the command.
     if tz.now() - pending.pending_at > dt.timedelta(minutes=10):
         pending.delete()
+        logger.warning('Pending block confirmation expired for phone=%s', phone_number)
         return 'Confirmation expired. Please send the block command again.'
 
     event_data = pending.event_data
@@ -367,9 +467,15 @@ def confirm_block_command(phone_number):
     try:
         service = get_calendar_service(phone_number)
     except Exception:
-        logger.exception('Calendar API connection error for %s', phone_number)
+        logger.exception('Calendar API connection error in confirm_block_command for phone=%s', phone_number)
         return 'Could not connect to your calendar right now. Please try again later.'
 
+    logger.info(
+        'Proceeding to create confirmed block: phone=%s title=%r start=%s',
+        phone_number,
+        title,
+        start_dt_local,
+    )
     return _create_calendar_block(phone_number, service, start_dt_local, end_dt_local, title, user_tz)
 
 
@@ -386,8 +492,15 @@ def _create_calendar_block(phone_number, service, start_dt_local, end_dt_local, 
     }
     try:
         created = service.events().insert(calendarId='primary', body=event_body).execute()
+        logger.info(
+            'Calendar block created: phone=%s event_id=%s title=%r start=%s',
+            phone_number,
+            created.get('id'),
+            title,
+            start_dt_local,
+        )
     except Exception:
-        logger.exception('Calendar API error creating event for %s', phone_number)
+        logger.exception('Calendar API error creating event for phone=%s title=%r', phone_number, title)
         return 'Could not create the event right now. Please try again later.'
 
     time_str = f'{start_dt_local.strftime("%H:%M")}-{end_dt_local.strftime("%H:%M")}'

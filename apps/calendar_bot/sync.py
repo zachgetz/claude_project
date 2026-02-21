@@ -20,8 +20,16 @@ def register_watch_channel(phone_number):
     """
     from .models import CalendarWatchChannel
 
+    logger.info('register_watch_channel called: phone=%s', phone_number)
+
     # Delete any existing channels for this user before registering a new one
-    CalendarWatchChannel.objects.filter(phone_number=phone_number).delete()
+    deleted_count, _ = CalendarWatchChannel.objects.filter(phone_number=phone_number).delete()
+    if deleted_count:
+        logger.info(
+            'Deleted %d existing watch channel(s) for phone=%s before re-registering',
+            deleted_count,
+            phone_number,
+        )
 
     service = get_calendar_service(phone_number)
 
@@ -44,7 +52,12 @@ def register_watch_channel(phone_number):
             },
         ).execute()
     except Exception as exc:
-        logger.exception('Failed to register watch channel for %s: %s', phone_number, exc)
+        logger.exception(
+            'Failed to register watch channel for phone=%s channel_id=%s: %s',
+            phone_number,
+            channel_id_str,
+            exc,
+        )
         new_channel.delete()
         raise
 
@@ -58,7 +71,12 @@ def register_watch_channel(phone_number):
     new_channel.expiry = expiry_dt
     new_channel.save()
 
-    logger.info('Registered watch channel %s for %s (expires %s)', channel_id_str, phone_number, expiry_dt)
+    logger.info(
+        'Registered watch channel: phone=%s channel_id=%s expiry=%s',
+        phone_number,
+        channel_id_str,
+        expiry_dt,
+    )
     return new_channel
 
 
@@ -71,7 +89,14 @@ def send_change_alerts(phone_number, changes):
     Sends alerts via Twilio WhatsApp.
     """
     if not changes:
+        logger.info('send_change_alerts: no changes to report for phone=%s', phone_number)
         return
+
+    logger.info(
+        'send_change_alerts called: phone=%s total_changes=%d',
+        phone_number,
+        len(changes),
+    )
 
     user_tz = get_user_tz(phone_number)
     now_local = datetime.datetime.now(tz=user_tz)
@@ -84,6 +109,9 @@ def send_change_alerts(phone_number, changes):
     )
     from_number = settings.TWILIO_WHATSAPP_NUMBER
 
+    alerts_sent = 0
+    alerts_skipped = 0
+
     for change in changes:
         change_type = change.get('type')
         event_id = change.get('event_id')
@@ -93,6 +121,13 @@ def send_change_alerts(phone_number, changes):
         # Determine the relevant datetime for the change (new_start or old_start)
         relevant_dt_utc = change.get('new_start') or change.get('old_start')
         if relevant_dt_utc is None:
+            logger.warning(
+                'send_change_alerts: skipping change with no start time: '
+                'phone=%s event_id=%s type=%s',
+                phone_number,
+                event_id,
+                change_type,
+            )
             continue
 
         # Convert to user's local timezone
@@ -103,6 +138,14 @@ def send_change_alerts(phone_number, changes):
 
         # Only notify for today or tomorrow
         if event_date not in (today, tomorrow):
+            logger.info(
+                'send_change_alerts: skipping event not today/tomorrow: '
+                'phone=%s event_id=%s event_date=%s',
+                phone_number,
+                event_id,
+                event_date,
+            )
+            alerts_skipped += 1
             continue
 
         # Determine relative day label
@@ -117,6 +160,12 @@ def send_change_alerts(phone_number, changes):
         if change_type == 'rescheduled':
             old_start_utc = change.get('old_start')
             if old_start_utc is None:
+                logger.warning(
+                    'send_change_alerts: rescheduled change missing old_start: '
+                    'phone=%s event_id=%s',
+                    phone_number,
+                    event_id,
+                )
                 continue
             if old_start_utc.tzinfo is None:
                 old_start_utc = pytz.UTC.localize(old_start_utc)
@@ -137,6 +186,12 @@ def send_change_alerts(phone_number, changes):
                 f'"{title}" at {time_str} {day_label}'
             )
         else:
+            logger.warning(
+                'send_change_alerts: unknown change type %r for phone=%s event_id=%s',
+                change_type,
+                phone_number,
+                event_id,
+            )
             continue
 
         try:
@@ -145,12 +200,25 @@ def send_change_alerts(phone_number, changes):
                 to=phone_number,
                 body=message,
             )
+            alerts_sent += 1
             logger.info(
-                'Change alert sent to %s: %s event_id=%s',
-                phone_number, change_type, event_id,
+                'Change alert sent: phone=%s type=%s event_id=%s',
+                phone_number,
+                change_type,
+                event_id,
             )
         except Exception as exc:
             logger.exception(
-                'Failed to send change alert to %s for event %s: %s',
-                phone_number, event_id, exc,
+                'Failed to send change alert: phone=%s event_id=%s type=%s: %s',
+                phone_number,
+                event_id,
+                change_type,
+                exc,
             )
+
+    logger.info(
+        'send_change_alerts complete: phone=%s alerts_sent=%d alerts_skipped=%d',
+        phone_number,
+        alerts_sent,
+        alerts_skipped,
+    )
