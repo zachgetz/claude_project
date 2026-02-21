@@ -309,7 +309,8 @@ def handle_block_command(phone_number, body):
     }
 
     if conflicts:
-        # Store pending confirmation
+        # Store pending confirmation (update_or_create resets pending_at via auto_now_add
+        # on insert; on update the existing pending_at is preserved — see migration 0008)
         PendingBlockConfirmation.objects.update_or_create(
             phone_number=phone_number,
             defaults={'event_data': event_data},
@@ -343,8 +344,9 @@ def confirm_block_command(phone_number):
     except PendingBlockConfirmation.DoesNotExist:
         return 'No pending block to confirm.'
 
-    # Check expiry (10-minute window)
-    if hasattr(pending, 'pending_at') and tz.now() - pending.pending_at > dt.timedelta(minutes=10):
+    # Enforce 10-minute expiry window using pending_at (set when the record was created).
+    # If the user waits more than 10 minutes to reply YES, they must re-send the command.
+    if tz.now() - pending.pending_at > dt.timedelta(minutes=10):
         pending.delete()
         return 'Confirmation expired. Please send the block command again.'
 
