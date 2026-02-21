@@ -27,7 +27,13 @@ def send_morning_meetings_digest(self):
 
     now_utc = datetime.datetime.now(tz=pytz.UTC)
 
-    for token in CalendarToken.objects.filter(digest_enabled=True):
+    try:
+        tokens = list(CalendarToken.objects.filter(digest_enabled=True))
+    except Exception as exc:
+        logger.exception('DB error fetching CalendarTokens for morning digest: %s', exc)
+        raise self.retry(exc=exc)
+
+    for token in tokens:
         phone_number = token.phone_number
         try:
             # Check if it's now the user's configured digest time (within the current minute)
@@ -39,10 +45,7 @@ def send_morning_meetings_digest(self):
             _send_digest_for_user(client, from_number, token)
         except Exception as exc:
             logger.exception('Error sending morning digest to %s: %s', phone_number, exc)
-            try:
-                raise self.retry(exc=exc)
-            except Exception:
-                pass
+            # Continue to the next user — per-user failures should not abort the whole task
 
 
 def _send_digest_for_user(client, from_number, token):
