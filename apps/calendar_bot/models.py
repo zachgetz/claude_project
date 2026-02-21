@@ -82,3 +82,25 @@ class PendingBlockConfirmation(models.Model):
 
     def __str__(self):
         return f'PendingBlockConfirmation({self.phone_number})'
+
+
+class OnboardingState(models.Model):
+    """
+    Tracks a user mid-onboarding flow.
+    Created when a new user sends their first message.
+    Deleted once the user provides their name.
+    """
+    STEP_AWAITING_NAME = 'awaiting_name'
+    STEP_CHOICES = [
+        (STEP_AWAITING_NAME, 'Awaiting name'),
+    ]
+
+    phone_number = models.CharField(max_length=20, primary_key=True)
+    step = models.CharField(max_length=50, choices=STEP_CHOICES, default=STEP_AWAITING_NAME)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'calendar_bot_onboardingstate'
+
+    def __str__(self):
+        return f'OnboardingState({self.phone_number}, step={self.step})'
