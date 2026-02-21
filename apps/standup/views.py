@@ -1,4 +1,5 @@
 import datetime
+import logging
 import re
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -6,6 +7,8 @@ from django.http import HttpResponse
 from twilio.twiml.messaging_response import MessagingResponse
 from apps.standup.permissions import TwilioSignaturePermission
 from apps.standup.models import StandupEntry
+
+logger = logging.getLogger(__name__)
 
 NEXT_MEETING_TRIGGERS = {'next meeting', 'next', "what's next", 'whats next'}
 FREE_TODAY_TRIGGERS = {'free today', 'am i free', 'free time', 'when am i free'}
@@ -240,7 +243,7 @@ class WhatsAppWebhookView(APIView):
                 events = []
 
             for ev in events:
-                if ev['start'] is None:  # all-day event — skip for next meeting
+                if ev['start'] is None:  # all-day event \u2014 skip for next meeting
                     continue
                 event_dt = ev['start']
                 if event_dt > now_local:
@@ -293,9 +296,10 @@ class WhatsAppWebhookView(APIView):
 
         try:
             events = get_events_for_date(from_number, today)
-        except Exception as e:
+        except Exception:
+            logger.exception('Calendar API error for %s', from_number)
             response = MessagingResponse()
-            response.message(f'Could not fetch calendar: {e}')
+            response.message('Could not fetch your calendar right now. Please try again later.')
             return HttpResponse(str(response), content_type='application/xml')
 
         # Filter to timed events only, within working hours
@@ -318,8 +322,15 @@ class WhatsAppWebhookView(APIView):
         busy = []
         for ev in timed_events:
             ev_start = ev['start']
-            # We don't have end time in our current structure; assume 1h duration
-            ev_end = ev_start + datetime.timedelta(hours=1)
+            # Use actual end time from event dict; fall back to +1h only if missing
+            ev_end_raw = ev.get('end')
+            if ev_end_raw:
+                try:
+                    ev_end = datetime.datetime.fromisoformat(ev_end_raw).astimezone(user_tz)
+                except (ValueError, TypeError):
+                    ev_end = ev_start + datetime.timedelta(hours=1)
+            else:
+                ev_end = ev_start + datetime.timedelta(hours=1)  # fallback only
             # Clip to working hours
             clipped_start = max(ev_start, work_start)
             clipped_end = min(ev_end, work_end)
@@ -415,8 +426,9 @@ class WhatsAppWebhookView(APIView):
         else:
             try:
                 events = get_events_for_date(from_number, target)
-            except Exception as e:
-                response.message(f'Could not fetch calendar: {e}')
+            except Exception:
+                logger.exception('Calendar API error for %s', from_number)
+                response.message('Could not fetch your calendar right now. Please try again later.')
                 return HttpResponse(str(response), content_type='application/xml')
             msg = format_events_for_day(events, label)
 
