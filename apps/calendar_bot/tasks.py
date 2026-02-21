@@ -65,8 +65,8 @@ def _send_digest_for_user(client, from_number, token):
         return
 
     # Build timezone-aware start/end
-    day_start = user_tz.localize(datetime.datetime(today.year, today.month, today.day, 0, 0, 0))
-    day_end = user_tz.localize(datetime.datetime(today.year, today.month, today.day, 23, 59, 59))
+    day_start = datetime.datetime(today.year, today.month, today.day, 0, 0, 0).astimezone(user_tz)
+    day_end = datetime.datetime(today.year, today.month, today.day, 23, 59, 59).astimezone(user_tz)
 
     try:
         events_result = service.events().list(
@@ -96,7 +96,7 @@ def _send_digest_for_user(client, from_number, token):
             if 'dateTime' in start_raw:
                 start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
                 if start_dt.tzinfo is None:
-                    start_dt = pytz.UTC.localize(start_dt)
+                    start_dt = start_dt.astimezone(pytz.UTC)
                 start_local = start_dt.astimezone(user_tz)
                 time_str = start_local.strftime('%H:%M')
             else:
