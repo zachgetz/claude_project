@@ -187,8 +187,8 @@ class CalendarNotificationsTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    @patch('apps.calendar_bot.views.send_change_alerts')
-    @patch('apps.calendar_bot.views.sync_calendar_snapshot')
+    @patch('apps.calendar_bot.sync.send_change_alerts')
+    @patch('apps.calendar_bot.calendar_service.sync_calendar_snapshot')
     def test_calls_sync_for_known_channel(self, mock_sync, mock_alerts):
         import uuid
         channel = CalendarWatchChannel.objects.create(
@@ -206,8 +206,8 @@ class CalendarNotificationsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mock_sync.assert_called_once_with(self.PHONE)
 
-    @patch('apps.calendar_bot.views.send_change_alerts')
-    @patch('apps.calendar_bot.views.sync_calendar_snapshot')
+    @patch('apps.calendar_bot.sync.send_change_alerts')
+    @patch('apps.calendar_bot.calendar_service.sync_calendar_snapshot')
     def test_sends_change_alerts_after_sync(self, mock_sync, mock_alerts):
         channel = CalendarWatchChannel.objects.create(
             phone_number=self.PHONE,
