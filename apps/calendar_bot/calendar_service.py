@@ -11,14 +11,16 @@ from .models import CalendarToken, CalendarEventSnapshot
 logger = logging.getLogger(__name__)
 
 
-def get_calendar_service(phone_number):
+def get_calendar_service(token):
     """
-    Load the CalendarToken for phone_number, refresh if expired, and
-    return a Google Calendar API service client.
+    Accept a CalendarToken object, build credentials, refresh if expired,
+    and return a Google Calendar API service client.
     """
-    logger.info('get_calendar_service called: phone=%s', phone_number)
-
-    token = CalendarToken.objects.get(phone_number=phone_number)
+    logger.info(
+        'get_calendar_service called: phone=%s email=%s',
+        token.phone_number,
+        token.account_email,
+    )
 
     creds = Credentials(
         token=token.access_token,
@@ -31,22 +33,35 @@ def get_calendar_service(phone_number):
     # Refresh if token is not valid (handles token_expiry=None safely)
     if not creds.valid:
         if creds.expired and creds.refresh_token:
-            logger.info('Refreshing expired access token for phone=%s', phone_number)
+            logger.info(
+                'Refreshing expired access token for phone=%s email=%s',
+                token.phone_number,
+                token.account_email,
+            )
             try:
                 creds.refresh(Request())
             except Exception:
-                logger.exception('Failed to refresh access token for phone=%s', phone_number)
+                logger.exception(
+                    'Failed to refresh access token for phone=%s email=%s',
+                    token.phone_number,
+                    token.account_email,
+                )
                 raise
             token.access_token = creds.token
             if creds.expiry:
                 token.token_expiry = creds.expiry.replace(tzinfo=pytz.UTC)
             token.save()
-            logger.info('Access token refreshed and saved for phone=%s', phone_number)
+            logger.info(
+                'Access token refreshed and saved for phone=%s email=%s',
+                token.phone_number,
+                token.account_email,
+            )
         else:
             logger.warning(
-                'Token invalid but cannot refresh for phone=%s '
+                'Token invalid but cannot refresh for phone=%s email=%s '
                 '(expired=%s has_refresh_token=%s)',
-                phone_number,
+                token.phone_number,
+                token.account_email,
                 creds.expired,
                 bool(creds.refresh_token),
             )
@@ -56,14 +71,17 @@ def get_calendar_service(phone_number):
 
 def get_user_tz(phone_number):
     """
-    Return the pytz timezone object for the user. Defaults to UTC if
-    no token exists or the stored timezone is invalid.
+    Return the pytz timezone object for the user. Uses the first token
+    (ordered by created_at). Defaults to UTC if no token exists or the
+    stored timezone is invalid.
     """
     try:
-        token = CalendarToken.objects.get(phone_number=phone_number)
+        token = CalendarToken.objects.filter(
+            phone_number=phone_number
+        ).order_by('created_at').first()
+        if token is None:
+            return pytz.UTC
         return pytz.timezone(token.timezone)
-    except CalendarToken.DoesNotExist:
-        return pytz.UTC
     except Exception:
         return pytz.UTC
 
@@ -72,6 +90,7 @@ def get_events_for_date(phone_number, target_date):
     """
     Fetch all-day and timed events from Google Calendar for a specific
     date (datetime.date) in the user's local timezone.
+    Loops all tokens for the phone, merges events, sorts by start time.
     Returns a list of event dicts with 'start', 'summary', 'end' keys.
     """
     logger.info(
@@ -81,89 +100,108 @@ def get_events_for_date(phone_number, target_date):
     )
 
     user_tz = get_user_tz(phone_number)
-    try:
-        service = get_calendar_service(phone_number)
-    except Exception:
-        logger.exception(
-            'Failed to get calendar service in get_events_for_date: phone=%s date=%s',
-            phone_number,
-            target_date,
-        )
-        raise
+    tokens = list(CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at'))
+
+    if not tokens:
+        logger.warning('get_events_for_date: no tokens for phone=%s', phone_number)
+        return []
 
     # Build timezone-aware start/end for the day
-    day_start = user_tz.localize(datetime.datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0))
-    day_end = user_tz.localize(datetime.datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59))
+    day_start = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
+    )
+    day_end = user_tz.localize(
+        datetime.datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59)
+    )
 
-    try:
-        events_result = service.events().list(
-            calendarId='primary',
-            timeMin=day_start.isoformat(),
-            timeMax=day_end.isoformat(),
-            singleEvents=True,
-            orderBy='startTime',
-        ).execute()
-    except Exception:
-        logger.exception(
-            'Google Calendar API error in get_events_for_date: phone=%s date=%s',
-            phone_number,
-            target_date,
-        )
-        raise
+    all_events = []
+    for token in tokens:
+        try:
+            service = get_calendar_service(token)
+        except Exception:
+            logger.exception(
+                'Failed to get calendar service in get_events_for_date: phone=%s email=%s date=%s',
+                phone_number,
+                token.account_email,
+                target_date,
+            )
+            continue  # skip this token, try others
 
-    events = []
-    for item in events_result.get('items', []):
-        start_raw = item.get('start', {})
-        end_raw = item.get('end', {})
-        # timed event
-        if 'dateTime' in start_raw:
-            start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
-            if start_dt.tzinfo is None:
-                start_dt = pytz.UTC.localize(start_dt)
-            start_local = start_dt.astimezone(user_tz)
-            events.append({
-                'start': start_local,
-                'start_str': start_local.strftime('%H:%M'),
-                'summary': item.get('summary', '(No title)'),
-                'end': end_raw.get('dateTime', end_raw.get('date')),
-                'raw': item,
-            })
-        else:
-            # all-day event
-            events.append({
-                'start': None,
-                'start_str': 'All day',
-                'summary': item.get('summary', '(No title)'),
-                'end': end_raw.get('date'),
-                'raw': item,
-            })
+        try:
+            events_result = service.events().list(
+                calendarId='primary',
+                timeMin=day_start.isoformat(),
+                timeMax=day_end.isoformat(),
+                singleEvents=True,
+                orderBy='startTime',
+            ).execute()
+        except Exception:
+            logger.exception(
+                'Google Calendar API error in get_events_for_date: phone=%s email=%s date=%s',
+                phone_number,
+                token.account_email,
+                target_date,
+            )
+            continue  # skip this token, try others
+
+        for item in events_result.get('items', []):
+            start_raw = item.get('start', {})
+            end_raw = item.get('end', {})
+            # timed event
+            if 'dateTime' in start_raw:
+                start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
+                if start_dt.tzinfo is None:
+                    start_dt = pytz.UTC.localize(start_dt)
+                start_local = start_dt.astimezone(user_tz)
+                all_events.append({
+                    'start': start_local,
+                    'start_str': start_local.strftime('%H:%M'),
+                    'summary': item.get('summary', '(No title)'),
+                    'end': end_raw.get('dateTime', end_raw.get('date')),
+                    'raw': item,
+                })
+            else:
+                # all-day event
+                all_events.append({
+                    'start': None,
+                    'start_str': 'All day',
+                    'summary': item.get('summary', '(No title)'),
+                    'end': end_raw.get('date'),
+                    'raw': item,
+                })
+
+    # Sort: all-day events first (start=None), then by start time
+    all_events.sort(key=lambda e: (e['start'] is not None, e['start'] or datetime.datetime.min.replace(tzinfo=pytz.UTC)))
 
     logger.info(
         'get_events_for_date result: phone=%s date=%s events_returned=%d',
         phone_number,
         target_date,
-        len(events),
+        len(all_events),
     )
-    return events
+    return all_events
 
 
-def sync_calendar_snapshot(phone_number, send_alerts=True):
+def sync_calendar_snapshot(token, send_alerts=True):
     """
-    Fetches events for next 7 days, compares with stored snapshots.
+    Accepts a CalendarToken object.
+    Fetches events for next 7 days, compares with stored snapshots scoped to this token.
     Returns list of changes: [{type, event_id, title, old_start, new_start}]
     Debounce: ignore if same event_id updated less than 5 min ago.
     Updates snapshots to latest state.
     If send_alerts=False, snapshots are updated silently (no changes returned).
     """
+    phone_number = token.phone_number
     now = datetime.datetime.now(tz=pytz.UTC)
     debounce_cutoff = now - datetime.timedelta(minutes=5)
 
     try:
-        service = get_calendar_service(phone_number)
+        service = get_calendar_service(token)
     except Exception:
         logger.exception(
-            'Failed to get calendar service in sync_calendar_snapshot: phone=%s',
+            'Failed to get calendar service in sync_calendar_snapshot: phone=%s email=%s',
             phone_number,
+            token.account_email,
         )
         raise
 
@@ -181,8 +219,9 @@ def sync_calendar_snapshot(phone_number, send_alerts=True):
         ).execute()
     except Exception:
         logger.exception(
-            'Google Calendar API error in sync_calendar_snapshot: phone=%s',
+            'Google Calendar API error in sync_calendar_snapshot: phone=%s email=%s',
             phone_number,
+            token.account_email,
         )
         raise
 
@@ -210,14 +249,12 @@ def sync_calendar_snapshot(phone_number, send_alerts=True):
             'end_time': end_dt.astimezone(pytz.UTC),
         }
 
-    # Load existing snapshots for this user, scoped to the same 7-day window.
-    # This avoids pulling ALL snapshots for the user (N+1 problem): a user with
-    # months of history could have thousands of rows, but we only need the ones
-    # that fall within [time_min, time_max] to perform the diff correctly.
+    # Load existing snapshots scoped to this specific token and time window.
     existing_snapshots = {
         snap.event_id: snap
         for snap in CalendarEventSnapshot.objects.filter(
             phone_number=phone_number,
+            token=token,
             start_time__gte=time_min,
             start_time__lte=time_max,
         )
@@ -233,6 +270,7 @@ def sync_calendar_snapshot(phone_number, send_alerts=True):
             # New event — create snapshot
             CalendarEventSnapshot.objects.create(
                 phone_number=phone_number,
+                token=token,
                 event_id=event_id,
                 title=current['title'],
                 start_time=current['start_time'],
@@ -368,9 +406,16 @@ def handle_block_command(phone_number, body):
         )
         return 'End time must be after start time.'
 
+    # Use first token for the block command
+    token = CalendarToken.objects.filter(
+        phone_number=phone_number
+    ).order_by('created_at').first()
+    if token is None:
+        return 'Please connect your Google Calendar first.'
+
     # Check for conflicts
     try:
-        service = get_calendar_service(phone_number)
+        service = get_calendar_service(token)
         events_result = service.events().list(
             calendarId='primary',
             timeMin=start_dt_local.isoformat(),
@@ -401,8 +446,6 @@ def handle_block_command(phone_number, body):
     }
 
     if conflicts:
-        # Store pending confirmation (update_or_create resets pending_at via auto_now_add
-        # on insert; on update the existing pending_at is preserved — see migration 0008)
         PendingBlockConfirmation.objects.update_or_create(
             phone_number=phone_number,
             defaults={'event_data': event_data},
@@ -443,8 +486,7 @@ def confirm_block_command(phone_number):
         logger.warning('confirm_block_command: no pending confirmation for phone=%s', phone_number)
         return 'No pending block to confirm.'
 
-    # Enforce 10-minute expiry window using pending_at (set when the record was created).
-    # If the user waits more than 10 minutes to reply YES, they must re-send the command.
+    # Enforce 10-minute expiry window
     if tz.now() - pending.pending_at > dt.timedelta(minutes=10):
         pending.delete()
         logger.warning('Pending block confirmation expired for phone=%s', phone_number)
@@ -464,8 +506,14 @@ def confirm_block_command(phone_number):
     if end_dt_local.tzinfo is None:
         end_dt_local = user_tz.localize(end_dt_local)
 
+    token = CalendarToken.objects.filter(
+        phone_number=phone_number
+    ).order_by('created_at').first()
+    if token is None:
+        return 'Please connect your Google Calendar first.'
+
     try:
-        service = get_calendar_service(phone_number)
+        service = get_calendar_service(token)
     except Exception:
         logger.exception('Calendar API connection error in confirm_block_command for phone=%s', phone_number)
         return 'Could not connect to your calendar right now. Please try again later.'
