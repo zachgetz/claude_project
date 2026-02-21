@@ -53,6 +53,9 @@ class CalendarWatchChannel(models.Model):
 class PendingBlockConfirmation(models.Model):
     phone_number = models.CharField(max_length=30)
     event_data = models.JSONField()  # {date, start, end, title}
+    # pending_at records when the confirmation was requested; used to enforce
+    # the 10-minute expiry window in confirm_block_command().
+    pending_at = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
