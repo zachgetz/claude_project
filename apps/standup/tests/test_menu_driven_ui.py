@@ -355,7 +355,12 @@ class MenuDrivenUITests(TestCase):
         self.assertIn('\u05d1\u05d8\u05dc', content)
 
     def test_schedule_cancel_at_step_1_with_0(self):
-        """'0' at any schedule step -> cancel and return to main menu."""
+        """'0' at any schedule step -> cancel, return MAIN_MENU_TEXT, state='main_menu'.
+
+        TZA-120 fix: state must be set to 'main_menu' (not deleted) so that the
+        very next inbound message is routed via _handle_main_menu_pick and the bot
+        remains fully responsive.
+        """
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
@@ -365,10 +370,15 @@ class MenuDrivenUITests(TestCase):
         response = self._post('0')
         content = self._content(response)
         self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
-        self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
+        # State row must exist with pending_action='main_menu'
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'main_menu')
 
     def test_schedule_cancel_at_step_4_with_batel(self):
-        """'batel' at step 4 -> cancel and return to main menu."""
+        """'batel' at step 4 -> cancel, return MAIN_MENU_TEXT, state='main_menu'.
+
+        TZA-120 fix: state must be 'main_menu', not deleted.
+        """
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
@@ -378,10 +388,16 @@ class MenuDrivenUITests(TestCase):
         response = self._post('\u05d1\u05d8\u05dc')  # batel
         content = self._content(response)
         self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
-        self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
+        # State row must exist with pending_action='main_menu'
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'main_menu')
 
     def test_schedule_happy_path_confirm(self):
-        """Full schedule flow: 'asher' creates event and returns success."""
+        """Full schedule flow: 'asher' creates event, returns success, state='main_menu'.
+
+        TZA-120 fix: after a successful event creation the state is set to
+        'main_menu' (not deleted) so the bot stays responsive.
+        """
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
@@ -403,10 +419,15 @@ class MenuDrivenUITests(TestCase):
         content = self._content(response)
         self.assertEqual(response.status_code, 200)
         self.assertIn('\u05d4\u05e4\u05d2\u05d9\u05e9\u05d4 \u05e0\u05e7\u05d1\u05e2\u05d4 \u05d1\u05d4\u05e6\u05dc\u05d7\u05d4', content)
-        self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
+        # State row must exist with pending_action='main_menu'
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'main_menu')
 
     def test_schedule_api_error_returns_error_message(self):
-        """Schedule flow: API error -> Hebrew error message + main menu."""
+        """Schedule flow: API error -> Hebrew error message + main menu, state='main_menu'.
+
+        TZA-120 fix: state is 'main_menu', not deleted.
+        """
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
@@ -427,7 +448,9 @@ class MenuDrivenUITests(TestCase):
             response = self._post('\u05d0\u05e9\u05e8')  # asher
         content = self._content(response)
         self.assertIn('\u05e9\u05d2\u05d9\u05d0\u05d4', content)
-        self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
+        # State row must exist with pending_action='main_menu'
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'main_menu')
 
     # ----------------------------------------------------------------------- #
     # Settings: timezone
