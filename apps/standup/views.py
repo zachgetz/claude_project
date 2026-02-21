@@ -26,6 +26,7 @@ MENU_TEXT = (
     "5. Free time today\n"
     "6. Help\n"
     "7. Set timezone\n"
+    "8. Birthdays next week\n"
     "\n"
     "Send 0 or 'menu' anytime to return here."
 )
@@ -114,8 +115,8 @@ class WhatsAppWebhookView(APIView):
             logger.info('Routing to menu handler: phone=%s', from_number)
             return self._handle_menu()
 
-        # Handle digit shortcuts 1-7
-        if body.strip() in {'1', '2', '3', '4', '5', '6', '7'}:
+        # Handle digit shortcuts 1-8
+        if body.strip() in {'1', '2', '3', '4', '5', '6', '7', '8'}:
             logger.info('Routing digit %s for phone=%s', body.strip(), from_number)
             return self._handle_menu_digit(request, from_number, body.strip())
 
@@ -347,6 +348,7 @@ class WhatsAppWebhookView(APIView):
             '5': 'free today',
             '6': 'help',
             '7': 'timezone',
+            '8': 'birthdays',
         }
         body_lower = digit_map[digit]
 
@@ -364,14 +366,17 @@ class WhatsAppWebhookView(APIView):
         if token is None or not token.access_token:
             return self._handle_connect_calendar(request, from_number)
 
+        if body_lower == 'birthdays':
+            result = self._try_birthdays_next_week(from_number)
+            return result if result is not None else self._handle_menu()
         if body_lower == 'next':
             result = self._try_next_meeting(from_number)
             return result if result is not None else self._handle_menu()
         if body_lower == 'free today':
             result = self._try_free_today(from_number)
             return result if result is not None else self._handle_menu()
-        # day query ('today', 'tomorrow', 'this week')
-        result = self._try_day_query(from_number, body_lower)
+        # day query ('today', 'tomorrow', 'this week') — exclude birthdays from meetings view
+        result = self._try_day_query(from_number, body_lower, exclude_birthdays=True)
         return result if result is not None else self._handle_menu()
 
     def _handle_unrecognized(self, request, from_number):
@@ -597,6 +602,37 @@ class WhatsAppWebhookView(APIView):
                 f'\u2022 {slot_start.strftime("%H:%M")}\u2013{slot_end.strftime("%H:%M")} ({dur_str})'
             )
 
+        response.message('\n'.join(lines))
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _try_birthdays_next_week(self, from_number):
+        """Fetch and display birthday events for the next 7 days."""
+        from apps.calendar_bot.calendar_service import get_birthdays_next_week
+        from apps.calendar_bot.models import CalendarToken
+
+        token = CalendarToken.objects.filter(
+            phone_number=from_number
+        ).order_by('created_at').first()
+        if token is None or not token.access_token:
+            return None
+
+        logger.info('Fetching birthdays next week for phone=%s', from_number)
+        try:
+            birthdays = get_birthdays_next_week(from_number)
+        except Exception:
+            logger.exception('Error fetching birthdays for phone=%s', from_number)
+            response = MessagingResponse()
+            response.message('Could not fetch birthdays right now. Please try again later.')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        response = MessagingResponse()
+        if not birthdays:
+            response.message('\U0001f382 No birthdays in the next 7 days.')
+            return HttpResponse(str(response), content_type='application/xml')
+
+        lines = ['\U0001f382 Birthdays next week:']
+        for b in birthdays:
+            lines.append(f"\u2022 {b['summary']} \u2014 {b['date']}")
         response.message('\n'.join(lines))
         return HttpResponse(str(response), content_type='application/xml')
 
