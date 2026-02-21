@@ -15,8 +15,8 @@ DATABASES = {
 
 CELERY_BROKER_URL = config('REDIS_URL', default='redis://localhost:6379/0')
 
-# Security headers
-SECURE_SSL_REDIRECT = True
+# Railway handles SSL at the proxy level — do not redirect internally
+SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_HSTS_SECONDS = 31536000  # 1 year
