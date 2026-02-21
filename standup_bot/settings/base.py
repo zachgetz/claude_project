@@ -1,5 +1,6 @@
 from pathlib import Path
 from decouple import config
+from celery.schedules import crontab
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -77,11 +78,9 @@ MORNING_DIGEST_HOUR = config('MORNING_DIGEST_HOUR', default=8, cast=int)
 
 # Celery beat schedule
 CELERY_BEAT_SCHEDULE = {
-    'morning-meetings-digest': {
+    'send-morning-meetings-digest': {
         'task': 'apps.calendar_bot.tasks.send_morning_meetings_digest',
-        'schedule': __import__('celery.schedules', fromlist=['crontab']).crontab(
-            hour=str(config('MORNING_DIGEST_HOUR', default=8, cast=int)),
-            minute='0',
-        ),
+        # Run every minute; per-user time check is inside the task
+        'schedule': crontab(minute='*'),
     },
 }
