@@ -3,6 +3,7 @@ Unit tests for calendar-bot commands handled in apps.standup.views.WhatsAppWebho
 
 Covers: set timezone, set digest, day queries, next meeting, free today, help, block commands.
 The TwilioSignaturePermission is patched out for all tests.
+Updated for TZA-78 multi-account: _make_token includes account_email.
 """
 import datetime
 from unittest.mock import patch, MagicMock
@@ -26,9 +27,10 @@ TWILIO_SETTINGS = dict(
 )
 
 
-def _make_token(phone='+1234567890', tz='America/New_York'):
+def _make_token(phone='whatsapp:+1234567890', tz='America/New_York', email='test@example.com'):
     return CalendarToken.objects.create(
         phone_number=phone,
+        account_email=email,
         access_token='access_abc',
         refresh_token='refresh_xyz',
         timezone=tz,
@@ -43,7 +45,6 @@ class SetTimezoneCommandTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.url = reverse('whatsapp-webhook')
-        # CalendarToken uses the bare phone number (no 'whatsapp:' prefix)
         _make_token(phone=self.PHONE)
 
     def _post(self, body):
@@ -58,7 +59,8 @@ class SetTimezoneCommandTests(TestCase):
         content = response.content.decode()
         self.assertIn('Europe/London', content)
 
-        token = CalendarToken.objects.get(phone_number=self.PHONE)
+        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
+        self.assertIsNotNone(token)
         self.assertEqual(token.timezone, 'Europe/London')
 
     def test_invalid_timezone_returns_error(self):
@@ -71,7 +73,8 @@ class SetTimezoneCommandTests(TestCase):
         """'set timezone' must start lowercase per views logic."""
         response = self._post('set timezone UTC')
         self.assertEqual(response.status_code, 200)
-        token = CalendarToken.objects.get(phone_number=self.PHONE)
+        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
+        self.assertIsNotNone(token)
         self.assertEqual(token.timezone, 'UTC')
 
 
@@ -94,24 +97,22 @@ class SetDigestCommandTests(TestCase):
     def test_set_digest_off(self):
         response = self._post('set digest off')
         self.assertEqual(response.status_code, 200)
-        token = CalendarToken.objects.get(phone_number=self.PHONE)
+        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
         self.assertFalse(token.digest_enabled)
 
     def test_set_digest_on(self):
         # First disable, then re-enable
-        token = CalendarToken.objects.get(phone_number=self.PHONE)
-        token.digest_enabled = False
-        token.save()
+        CalendarToken.objects.filter(phone_number=self.PHONE).update(digest_enabled=False)
 
         response = self._post('set digest on')
         self.assertEqual(response.status_code, 200)
-        token.refresh_from_db()
+        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
         self.assertTrue(token.digest_enabled)
 
     def test_set_digest_always(self):
         response = self._post('set digest always')
         self.assertEqual(response.status_code, 200)
-        token = CalendarToken.objects.get(phone_number=self.PHONE)
+        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
         self.assertTrue(token.digest_always)
 
     def test_set_digest_time_24h(self):
@@ -120,14 +121,14 @@ class SetDigestCommandTests(TestCase):
         content = response.content.decode()
         self.assertIn('07:30', content)
 
-        token = CalendarToken.objects.get(phone_number=self.PHONE)
+        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
         self.assertEqual(token.digest_hour, 7)
         self.assertEqual(token.digest_minute, 30)
 
     def test_set_digest_time_pm(self):
         response = self._post('set digest 2pm')
         self.assertEqual(response.status_code, 200)
-        token = CalendarToken.objects.get(phone_number=self.PHONE)
+        token = CalendarToken.objects.filter(phone_number=self.PHONE).first()
         self.assertEqual(token.digest_hour, 14)
         self.assertEqual(token.digest_minute, 0)
 
@@ -182,7 +183,6 @@ class DayQueryTests(TestCase):
     @patch('apps.calendar_bot.calendar_service.get_calendar_service')
     def test_named_day_no_token_returns_nothing_routed_to_standup(self, mock_get_svc):
         """User without CalendarToken falls through to standup logging."""
-        # Remove token so user has no calendar connected
         CalendarToken.objects.filter(phone_number=self.PHONE).delete()
         response = self._post('friday')
         # Without a token, day query returns None, falls through to onboarding
@@ -290,7 +290,6 @@ class HelpCommandTests(TestCase):
         response = self._post('help')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # help text should mention key commands
         self.assertIn('today', content)
         self.assertIn('block', content)
 
@@ -310,7 +309,6 @@ class HelpCommandTests(TestCase):
         response = self._post('hello world')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Unrecognized messages are recorded as standup entries
         self.assertIn('Logged', content)
 
 
@@ -356,7 +354,6 @@ class BlockCommandTests(TestCase):
     def test_yes_confirms_pending_block(self, mock_confirm):
         mock_confirm.return_value = '\u2705 Blocked: "Deep Work" on Saturday, Feb 21 10:00-11:00'
 
-        # Create a pending confirmation in DB
         PendingBlockConfirmation.objects.create(
             phone_number=self.PHONE,
             event_data={
@@ -375,17 +372,13 @@ class BlockCommandTests(TestCase):
 
     def test_yes_with_no_pending_falls_through(self):
         """YES with no pending block should fall through to standup logging."""
-        # No PendingBlockConfirmation exists
         response = self._post('YES')
         self.assertEqual(response.status_code, 200)
-        # Should log as standup entry since no pending block exists and user has token
-        # (connected user with unrecognized message -> help text)
         content = response.content.decode()
-        # Not a block confirmation response
         self.assertNotIn('Blocked:', content)
 
     @patch('apps.calendar_bot.calendar_service.handle_block_command')
-    def test_block_no_token_returns_onboarding(self, mock_handle):
+    def test_block_no_token_returns_connect_calendar_message(self, mock_handle):
         """User without a CalendarToken gets the connect calendar message."""
         CalendarToken.objects.filter(phone_number=self.PHONE).delete()
 
