@@ -108,12 +108,12 @@ class WhatsAppWebhookView(APIView):
         # Handle help command
         if body_lower in HELP_TRIGGERS:
             logger.info('Routing to help handler: phone=%s', from_number)
-            return self._handle_help()
+            return self._handle_help(from_number)
 
         # Handle menu (including '0' shortcut)
         if body_lower in MENU_TRIGGERS:
             logger.info('Routing to menu handler: phone=%s', from_number)
-            return self._handle_menu()
+            return self._handle_menu(from_number)
 
         # Handle digit shortcuts 1-8
         if body.strip() in {'1', '2', '3', '4', '5', '6', '7', '8'}:
@@ -193,6 +193,25 @@ class WhatsAppWebhookView(APIView):
             body,
         )
         return self._handle_unrecognized(request, from_number)
+
+    # ------------------------------------------------------------------ #
+    # i18n helper
+    # ------------------------------------------------------------------ #
+
+    def _get_strings(self, phone_number):
+        """Return the strings module for the user's language (default: Hebrew)."""
+        from apps.calendar_bot.models import CalendarToken
+        import apps.standup.strings_he as strings_he
+
+        token = CalendarToken.objects.filter(
+            phone_number=phone_number
+        ).order_by('created_at').first()
+        lang = getattr(token, 'language', 'he') if token else 'he'
+
+        if lang == 'he':
+            return strings_he
+        # Default to Hebrew for now (English i18n can be added later)
+        return strings_he
 
     # ------------------------------------------------------------------ #
     # Multi-account calendar commands
@@ -324,19 +343,25 @@ class WhatsAppWebhookView(APIView):
     # Help, menu and onboarding
     # ------------------------------------------------------------------ #
 
-    def _handle_help(self):
+    def _handle_help(self, phone_number=None):
+        s = self._get_strings(phone_number) if phone_number else None
+        text = s.HELP_TEXT if s else HELP_TEXT
         response = MessagingResponse()
-        response.message(HELP_TEXT)
+        response.message(text)
         return HttpResponse(str(response), content_type='application/xml')
 
-    def _handle_menu(self):
+    def _handle_menu(self, phone_number=None):
+        s = self._get_strings(phone_number) if phone_number else None
+        text = s.MENU_TEXT if s else MENU_TEXT
         response = MessagingResponse()
-        response.message(MENU_TEXT)
+        response.message(text)
         return HttpResponse(str(response), content_type='application/xml')
 
-    def _handle_timezone_menu(self):
+    def _handle_timezone_menu(self, phone_number=None):
+        s = self._get_strings(phone_number) if phone_number else None
+        text = s.TIMEZONE_SUB_MENU if s else TIMEZONE_SUB_MENU
         response = MessagingResponse()
-        response.message(TIMEZONE_SUB_MENU)
+        response.message(text)
         return HttpResponse(str(response), content_type='application/xml')
 
     def _handle_menu_digit(self, request, from_number, digit):
@@ -353,10 +378,10 @@ class WhatsAppWebhookView(APIView):
         body_lower = digit_map[digit]
 
         if body_lower == 'help':
-            return self._handle_help()
+            return self._handle_help(from_number)
 
         if body_lower == 'timezone':
-            return self._handle_timezone_menu()
+            return self._handle_timezone_menu(from_number)
 
         # Calendar queries require a connected account
         from apps.calendar_bot.models import CalendarToken
@@ -368,22 +393,22 @@ class WhatsAppWebhookView(APIView):
 
         if body_lower == 'birthdays':
             result = self._try_birthdays_next_week(from_number)
-            return result if result is not None else self._handle_menu()
+            return result if result is not None else self._handle_menu(from_number)
         if body_lower == 'next':
             result = self._try_next_meeting(from_number)
-            return result if result is not None else self._handle_menu()
+            return result if result is not None else self._handle_menu(from_number)
         if body_lower == 'free today':
             result = self._try_free_today(from_number)
-            return result if result is not None else self._handle_menu()
-        # day query ('today', 'tomorrow', 'this week') — exclude birthdays from meetings view
+            return result if result is not None else self._handle_menu(from_number)
+        # day query ('today', 'tomorrow', 'this week') -- exclude birthdays from meetings view
         result = self._try_day_query(from_number, body_lower, exclude_birthdays=True)
-        return result if result is not None else self._handle_menu()
+        return result if result is not None else self._handle_menu(from_number)
 
     def _handle_unrecognized(self, request, from_number):
         """
         Unrecognized message handler:
-        - No calendar connected → onboarding message with connect link
-        - Calendar connected    → short hint to use the menu
+        - No calendar connected -> onboarding message with connect link
+        - Calendar connected    -> short hint to use the menu
         """
         from apps.calendar_bot.models import CalendarToken
 
@@ -413,10 +438,11 @@ class WhatsAppWebhookView(APIView):
             response.message(onboarding_text)
             return HttpResponse(str(response), content_type='application/xml')
 
-        # Connected user sent something unrecognised → brief hint only
+        # Connected user sent something unrecognised -> brief hint only
         logger.info('Connected user sent unrecognized message, sending hint: phone=%s', from_number)
+        s = self._get_strings(from_number)
         response = MessagingResponse()
-        response.message(_UNRECOGNIZED_HINT)
+        response.message(s.UNRECOGNIZED_HINT)
         return HttpResponse(str(response), content_type='application/xml')
 
     # keep for backwards-compat
