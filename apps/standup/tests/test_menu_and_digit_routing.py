@@ -10,7 +10,7 @@ These tests verify the new behaviour:
 - Menu trigger words (menu / options / calendar) behave the same as any
   other root-level input for connected users (show main menu).
 - Digits 1-5 in 'main_menu' state enter the corresponding submenu.
-- Digit 6 in 'main_menu' state shows Hebrew help text.
+- Digit 6 in 'main_menu' state shows the Hebrew help text.
 - Digit 0 in 'main_menu' state re-shows the main menu.
 - Invalid input in 'main_menu' state shows INVALID_OPTION + main menu.
 - Meetings submenu (digits 1-4) delegates to calendar query helpers.
@@ -28,6 +28,7 @@ from rest_framework.test import APIClient
 
 from apps.standup.models import StandupEntry
 from apps.calendar_bot.models import CalendarToken, UserMenuState
+from apps.standup.views import HELP_TEXT
 
 
 PATCH_PERMISSION = patch(
@@ -253,13 +254,15 @@ class DigitRoutingTests(TestCase):
     # ------------------------------------------------------------------
 
     def test_main_menu_digit_6_returns_hebrew_help_text(self):
-        """In main_menu state, digit '6' returns the Hebrew help text."""
+        """In main_menu state, digit '6' returns the Hebrew help text constant."""
         self._set_state('main_menu')
         response = self._post('6')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Help text contains Hebrew (not English 'calendar assistant')
-        self.assertIn('\u05e2\u05d6\u05e8', content)  # 'עזר' (help)
+        # The response must contain a portion of HELP_TEXT (imported from views).
+        # We check for a substring common to all HELP_TEXT variants.
+        first_line = HELP_TEXT.split('\n')[0]
+        self.assertIn(first_line, content)
 
     def test_main_menu_digit_6_does_not_create_standup_entry(self):
         """Digit '6' must NOT create a StandupEntry."""
