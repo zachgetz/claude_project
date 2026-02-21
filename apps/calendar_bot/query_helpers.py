@@ -54,18 +54,16 @@ def resolve_day(text, today):
         return d, _date_label(d)
 
     # 'next <day>'
-    next_match = None
     if text.startswith('next '):
         day_word = text[5:].strip()
         if day_word in DAY_NAMES:
             target_weekday = DAY_NAMES[day_word]
-            # always go to the FOLLOWING week's occurrence
-            days_ahead = target_weekday - today.weekday()
-            if days_ahead <= 0:  # same day or past -> jump to next week
-                days_ahead += 7
-            else:  # future this week -> also jump a full week further
-                days_ahead += 7
-            d = today + datetime.timedelta(days=days_ahead)
+            # Always jump to the following Mon-Sun calendar week, then find
+            # the target weekday within that week.
+            days_until_next_monday = (7 - today.weekday()) % 7 or 7
+            next_monday = today + datetime.timedelta(days=days_until_next_monday)
+            days_ahead = (target_weekday - next_monday.weekday()) % 7
+            d = next_monday + datetime.timedelta(days=days_ahead)
             return d, _date_label(d)
 
     # plain day name
