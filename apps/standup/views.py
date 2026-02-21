@@ -51,40 +51,55 @@ class WhatsAppWebhookView(APIView):
         body = request.data.get('Body', '')
         body_lower = body.strip().lower()
 
+        # Log every incoming webhook request
+        logger.info(
+            'Incoming webhook: phone=%s body=%.50r',
+            from_number,
+            body,
+        )
+
         # Handle /summary command BEFORE any saving
         if body_lower == '/summary':
+            logger.info('Routing to summary handler: phone=%s', from_number)
             return self._handle_summary(from_number)
 
         # Handle help command
         if body_lower in HELP_TRIGGERS:
+            logger.info('Routing to help handler: phone=%s', from_number)
             return self._handle_help()
 
         # Handle set timezone command
         if body_lower.startswith('set timezone '):
+            logger.info('Routing to set_timezone handler: phone=%s', from_number)
             return self._handle_set_timezone(from_number, body)
 
         # Handle set digest command
         if body_lower.startswith('set digest'):
+            logger.info('Routing to set_digest handler: phone=%s', from_number)
             return self._handle_set_digest(from_number, body_lower)
 
         # Handle block time command
         if body_lower.startswith('block ') or body_lower.startswith('add meeting '):
+            logger.info('Routing to block_command handler: phone=%s', from_number)
             return self._handle_block_command(from_number, body)
 
         # Handle YES confirmation for pending block
         if body.strip().upper() == 'YES':
+            logger.info('Routing to YES confirmation handler: phone=%s', from_number)
             yes_result = self._handle_yes_confirmation(from_number)
             if yes_result is not None:
                 return yes_result
 
         # Handle instant queries: next meeting
         if body_lower in NEXT_MEETING_TRIGGERS:
+            logger.info('Routing to next_meeting query: phone=%s', from_number)
             result = self._try_next_meeting(from_number)
             if result is not None:
                 return result
 
         # Handle instant queries: free today
         if body_lower in FREE_TODAY_TRIGGERS:
+            logger.info('Routing to free_today query: phone=%s', from_number)
             result = self._try_free_today(from_number)
             if result is not None:
                 return result
@@ -95,6 +110,7 @@ class WhatsAppWebhookView(APIView):
             return day_result
 
         if not body.strip():
+            logger.warning('Received empty body from phone=%s', from_number)
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
         # --- Fallthrough: unrecognized message ---
@@ -102,16 +118,39 @@ class WhatsAppWebhookView(APIView):
         # Calendar onboarding is only shown when user sends help/? commands.
         current_week = datetime.datetime.now().isocalendar()[1]
 
-        entry = StandupEntry.objects.create(
-            phone_number=from_number,
-            message=body,
-            week_number=current_week,
+        logger.info(
+            'Recording standup entry: phone=%s week=%d body=%.50r',
+            from_number,
+            current_week,
+            body,
         )
+
+        try:
+            entry = StandupEntry.objects.create(
+                phone_number=from_number,
+                message=body,
+                week_number=current_week,
+            )
+        except Exception:
+            logger.exception(
+                'Failed to create StandupEntry: phone=%s week=%d',
+                from_number,
+                current_week,
+            )
+            raise
 
         entry_count = StandupEntry.objects.filter(
             phone_number=from_number,
             week_number=current_week,
         ).count()
+
+        logger.info(
+            'StandupEntry created: id=%s phone=%s week=%d entry_count=%d',
+            entry.pk,
+            from_number,
+            current_week,
+            entry_count,
+        )
 
         reply_text = (
             f"Got it \u2713 Logged for today (entry #{entry_count} this week). "
@@ -136,6 +175,10 @@ class WhatsAppWebhookView(APIView):
             if not token.access_token:
                 raise CalendarToken.DoesNotExist
         except CalendarToken.DoesNotExist:
+            logger.warning(
+                'Block command requested but no calendar connected: phone=%s',
+                from_number,
+            )
             response = MessagingResponse()
             response.message(
                 'Please connect your Google Calendar first. '
@@ -157,6 +200,7 @@ class WhatsAppWebhookView(APIView):
         except PendingBlockConfirmation.DoesNotExist:
             return None  # Not a YES for pending block, fall through
 
+        logger.info('Processing YES confirmation for pending block: phone=%s', from_number)
         reply_text = confirm_block_command(from_number)
         response = MessagingResponse()
         response.message(reply_text)
@@ -187,6 +231,7 @@ class WhatsAppWebhookView(APIView):
             has_calendar = False
 
         if not has_calendar:
+            logger.info('Sending onboarding message to unconfigured user: phone=%s', from_number)
             # Build the OAuth start URL
             auth_url = request.build_absolute_uri(
                 f'/calendar/auth/start/?phone={from_number}'
@@ -237,10 +282,15 @@ class WhatsAppWebhookView(APIView):
             try:
                 events = get_events_for_date(from_number, check_date)
             except Exception:
+                logger.exception(
+                    'Calendar API error fetching next meeting for phone=%s date=%s',
+                    from_number,
+                    check_date,
+                )
                 events = []
 
             for ev in events:
-                if ev['start'] is None:  # all-day event \u2014 skip for next meeting
+                if ev['start'] is None:  # all-day event — skip for next meeting
                     continue
                 event_dt = ev['start']
                 if event_dt > now_local:
@@ -270,9 +320,16 @@ class WhatsAppWebhookView(APIView):
                         day_label = event_dt.strftime('%A, %b %-d')
                         msg = f'No more meetings soon. Next: {ev["start_str"]} {ev["summary"]} on {day_label}'
 
+                    logger.info(
+                        'Next meeting found for phone=%s: %r days_offset=%d',
+                        from_number,
+                        ev['summary'],
+                        days_offset,
+                    )
                     response.message(msg)
                     return HttpResponse(str(response), content_type='application/xml')
 
+        logger.info('No upcoming meetings found for phone=%s', from_number)
         response.message('No more meetings this week.')
         return HttpResponse(str(response), content_type='application/xml')
 
@@ -291,10 +348,12 @@ class WhatsAppWebhookView(APIView):
         user_tz = get_user_tz(from_number)
         today = datetime.datetime.now(tz=user_tz).date()
 
+        logger.info('Calculating free slots for phone=%s date=%s', from_number, today)
+
         try:
             events = get_events_for_date(from_number, today)
         except Exception:
-            logger.exception('Calendar API error for %s', from_number)
+            logger.exception('Calendar API error fetching events for phone=%s date=%s', from_number, today)
             response = MessagingResponse()
             response.message('Could not fetch your calendar right now. Please try again later.')
             return HttpResponse(str(response), content_type='application/xml')
@@ -312,6 +371,7 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
 
         if not timed_events:
+            logger.info('No timed events for phone=%s date=%s — fully free', from_number, today)
             response.message("You're completely free today.")
             return HttpResponse(str(response), content_type='application/xml')
 
@@ -358,6 +418,13 @@ class WhatsAppWebhookView(APIView):
             slot_minutes = int((work_end - cursor).total_seconds() / 60)
             if slot_minutes >= MIN_FREE_SLOT_MINUTES:
                 free_slots.append((cursor, work_end, slot_minutes))
+
+        logger.info(
+            'Free slots computed for phone=%s date=%s: %d slot(s) found',
+            from_number,
+            today,
+            len(free_slots),
+        )
 
         if not free_slots:
             response.message('Pretty packed today \u2014 no free slots over 30 minutes.')
@@ -407,6 +474,14 @@ class WhatsAppWebhookView(APIView):
         if target is None:
             return None
 
+        logger.info(
+            'Day query: phone=%s body=%.50r resolved_target=%s label=%r',
+            from_number,
+            body_lower,
+            target,
+            label,
+        )
+
         response = MessagingResponse()
 
         if target == 'week':
@@ -419,6 +494,11 @@ class WhatsAppWebhookView(APIView):
                 try:
                     evs = get_events_for_date(from_number, current)
                 except Exception:
+                    logger.exception(
+                        'Calendar API error for week view: phone=%s date=%s',
+                        from_number,
+                        current,
+                    )
                     evs = []
                 week_events[current] = evs
                 current += datetime.timedelta(days=1)
@@ -427,9 +507,19 @@ class WhatsAppWebhookView(APIView):
             try:
                 events = get_events_for_date(from_number, target)
             except Exception:
-                logger.exception('Calendar API error for %s', from_number)
+                logger.exception(
+                    'Calendar API error for day query: phone=%s date=%s',
+                    from_number,
+                    target,
+                )
                 response.message('Could not fetch your calendar right now. Please try again later.')
                 return HttpResponse(str(response), content_type='application/xml')
+            logger.info(
+                'Day query result: phone=%s date=%s events=%d',
+                from_number,
+                target,
+                len(events),
+            )
             msg = format_events_for_day(events, label)
 
         response.message(msg)
@@ -452,6 +542,7 @@ class WhatsAppWebhookView(APIView):
         if arg == 'off':
             token.digest_enabled = False
             token.save(update_fields=['digest_enabled', 'updated_at'])
+            logger.info('Digest disabled for phone=%s', from_number)
             response = MessagingResponse()
             response.message('Morning digest turned off.')
             return HttpResponse(str(response), content_type='application/xml')
@@ -459,6 +550,7 @@ class WhatsAppWebhookView(APIView):
         if arg == 'on':
             token.digest_enabled = True
             token.save(update_fields=['digest_enabled', 'updated_at'])
+            logger.info('Digest enabled for phone=%s', from_number)
             response = MessagingResponse()
             response.message('Morning digest turned on.')
             return HttpResponse(str(response), content_type='application/xml')
@@ -466,6 +558,7 @@ class WhatsAppWebhookView(APIView):
         if arg == 'always':
             token.digest_always = True
             token.save(update_fields=['digest_always', 'updated_at'])
+            logger.info('Digest set to always-send for phone=%s', from_number)
             response = MessagingResponse()
             response.message('Morning digest will be sent even on days with no meetings.')
             return HttpResponse(str(response), content_type='application/xml')
@@ -477,10 +570,16 @@ class WhatsAppWebhookView(APIView):
             token.digest_minute = minute
             token.digest_enabled = True
             token.save(update_fields=['digest_hour', 'digest_minute', 'digest_enabled', 'updated_at'])
+            logger.info('Digest time set to %02d:%02d for phone=%s', hour, minute, from_number)
             response = MessagingResponse()
             response.message(f'Morning digest scheduled for {hour:02d}:{minute:02d} in your timezone.')
             return HttpResponse(str(response), content_type='application/xml')
 
+        logger.warning(
+            'Could not parse digest setting %r for phone=%s',
+            arg,
+            from_number,
+        )
         response = MessagingResponse()
         response.message(
             'Could not understand digest setting. '
@@ -497,6 +596,7 @@ class WhatsAppWebhookView(APIView):
         try:
             pytz.timezone(tz_name)
         except Exception:
+            logger.warning('Invalid timezone %r from phone=%s', tz_name, from_number)
             response = MessagingResponse()
             response.message(
                 f"Unknown timezone '{tz_name}'. "
@@ -511,6 +611,7 @@ class WhatsAppWebhookView(APIView):
         token.timezone = tz_name
         token.save(update_fields=['timezone', 'updated_at'])
 
+        logger.info('Timezone set to %s for phone=%s', tz_name, from_number)
         response = MessagingResponse()
         response.message(f"Timezone set to {tz_name}.")
         return HttpResponse(str(response), content_type='application/xml')
@@ -522,6 +623,13 @@ class WhatsAppWebhookView(APIView):
             phone_number=from_number,
             week_number=current_week,
         ).order_by('created_at')
+
+        logger.info(
+            'Summary requested: phone=%s week=%d entries=%d',
+            from_number,
+            current_week,
+            entries.count(),
+        )
 
         response = MessagingResponse()
 
