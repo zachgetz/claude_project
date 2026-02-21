@@ -74,3 +74,14 @@ CELERY_TIMEZONE = 'UTC'
 
 # Morning digest default hour (UTC)
 MORNING_DIGEST_HOUR = config('MORNING_DIGEST_HOUR', default=8, cast=int)
+
+# Celery beat schedule
+CELERY_BEAT_SCHEDULE = {
+    'morning-meetings-digest': {
+        'task': 'apps.calendar_bot.tasks.send_morning_meetings_digest',
+        'schedule': __import__('celery.schedules', fromlist=['crontab']).crontab(
+            hour=str(config('MORNING_DIGEST_HOUR', default=8, cast=int)),
+            minute='0',
+        ),
+    },
+}
