@@ -83,4 +83,8 @@ CELERY_BEAT_SCHEDULE = {
         # Run every minute; per-user time check is inside the task
         'schedule': crontab(minute='*'),
     },
+    'renew-watch-channels': {
+        'task': 'apps.calendar_bot.tasks.renew_watch_channels',
+        'schedule': crontab(hour='3', minute='0'),  # 3am UTC daily
+    },
 }
