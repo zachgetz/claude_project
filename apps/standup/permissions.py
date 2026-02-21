@@ -11,10 +11,17 @@ class TwilioSignaturePermission(BasePermission):
     """
 
     def has_permission(self, request, view):
-        validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
-
-        signature = request.META.get('HTTP_X_TWILIO_SIGNATURE', '')
-        url = request.build_absolute_uri()
-        post_params = request.data if isinstance(request.data, dict) else {}
-
-        return validator.validate(url, post_params, signature)
+        try:
+            validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+            signature = request.META.get('HTTP_X_TWILIO_SIGNATURE', '')
+            url = request.build_absolute_uri()
+            # request.data may be a QueryDict (not a plain dict) — convert it
+            if hasattr(request.data, 'dict'):
+                post_params = request.data.dict()
+            elif isinstance(request.data, dict):
+                post_params = request.data
+            else:
+                post_params = {}
+            return validator.validate(url, post_params, signature)
+        except Exception:
+            return False
