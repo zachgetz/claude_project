@@ -18,6 +18,8 @@ Tests still covered:
 
 The TwilioSignaturePermission is patched out for all tests.
 Updated for TZA-78 multi-account: _make_token includes account_email.
+Updated for TZA-127: mock _query_meetings_msg/_query_next_meeting_msg/_query_free_time_msg
+(the actual methods invoked by menu routing) instead of the legacy wrapper methods.
 """
 import datetime
 from unittest.mock import patch, MagicMock
@@ -182,28 +184,20 @@ class DayQueryTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings_msg')
     def test_today_query_routed(self, mock_query):
-        """Meetings submenu digit '1' calls _query_meetings (today)."""
-        from django.http import HttpResponse
-        from twilio.twiml.messaging_response import MessagingResponse
-        twiml = MessagingResponse()
-        twiml.message('09:00 Standup\n1 meeting')
-        mock_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        """Meetings submenu digit '1' calls _query_meetings_msg (today)."""
+        mock_query.return_value = '09:00 Standup\n1 meeting'
 
         _set_state(self.PHONE, 'meetings_menu', 1, {})
         response = self._post('1')
         self.assertEqual(response.status_code, 200)
         mock_query.assert_called_once()
 
-    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings_msg')
     def test_tomorrow_query_routed(self, mock_query):
-        """Meetings submenu digit '2' calls _query_meetings (tomorrow)."""
-        from django.http import HttpResponse
-        from twilio.twiml.messaging_response import MessagingResponse
-        twiml = MessagingResponse()
-        twiml.message('14:00 Planning\n1 meeting')
-        mock_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        """Meetings submenu digit '2' calls _query_meetings_msg (tomorrow)."""
+        mock_query.return_value = '14:00 Planning\n1 meeting'
 
         _set_state(self.PHONE, 'meetings_menu', 1, {})
         response = self._post('2')
@@ -236,28 +230,20 @@ class NextMeetingTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    @patch('apps.standup.views.WhatsAppWebhookView._query_next_meeting')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_next_meeting_msg')
     def test_next_meeting_trigger_routed(self, mock_next):
-        """Meetings submenu digit '4' calls _query_next_meeting."""
-        from django.http import HttpResponse
-        from twilio.twiml.messaging_response import MessagingResponse
-        twiml = MessagingResponse()
-        twiml.message('Your next meeting: Standup at 09:00 (in 30 minutes)')
-        mock_next.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        """Meetings submenu digit '4' calls _query_next_meeting_msg."""
+        mock_next.return_value = 'Your next meeting: Standup at 09:00 (in 30 minutes)'
 
         _set_state(self.PHONE, 'meetings_menu', 1, {})
         response = self._post('4')
         self.assertEqual(response.status_code, 200)
         mock_next.assert_called_once()
 
-    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_meetings_msg')
     def test_week_query_routed(self, mock_query):
-        """Meetings submenu digit '3' calls _query_meetings (this week)."""
-        from django.http import HttpResponse
-        from twilio.twiml.messaging_response import MessagingResponse
-        twiml = MessagingResponse()
-        twiml.message('No more meetings this week.')
-        mock_query.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        """Meetings submenu digit '3' calls _query_meetings_msg (this week)."""
+        mock_query.return_value = 'No more meetings this week.'
 
         _set_state(self.PHONE, 'meetings_menu', 1, {})
         response = self._post('3')
@@ -282,28 +268,20 @@ class FreeTodayTests(TestCase):
                 self.url, data={'From': self.PHONE, 'Body': body}, format='multipart'
             )
 
-    @patch('apps.standup.views.WhatsAppWebhookView._query_free_time')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_free_time_msg')
     def test_free_today_trigger_routed(self, mock_free):
-        """Free-time submenu digit '1' calls _query_free_time for today."""
-        from django.http import HttpResponse
-        from twilio.twiml.messaging_response import MessagingResponse
-        twiml = MessagingResponse()
-        twiml.message("You're completely free today.")
-        mock_free.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        """Free-time submenu digit '1' calls _query_free_time_msg for today."""
+        mock_free.return_value = "You're completely free today."
 
         _set_state(self.PHONE, 'free_time_menu', 1, {})
         response = self._post('1')
         self.assertEqual(response.status_code, 200)
         mock_free.assert_called_once()
 
-    @patch('apps.standup.views.WhatsAppWebhookView._query_free_time')
+    @patch('apps.standup.views.WhatsAppWebhookView._query_free_time_msg')
     def test_free_tomorrow_trigger_routed(self, mock_free):
-        """Free-time submenu digit '2' calls _query_free_time for tomorrow."""
-        from django.http import HttpResponse
-        from twilio.twiml.messaging_response import MessagingResponse
-        twiml = MessagingResponse()
-        twiml.message('Free slots today:\n\u2022 08:00\u201309:00 (1 hr)')
-        mock_free.return_value = HttpResponse(str(twiml), content_type='application/xml')
+        """Free-time submenu digit '2' calls _query_free_time_msg for tomorrow."""
+        mock_free.return_value = 'Free slots today:\n\u2022 08:00\u201309:00 (1 hr)'
 
         _set_state(self.PHONE, 'free_time_menu', 1, {})
         response = self._post('2')
@@ -360,7 +338,7 @@ class HelpCommandTests(TestCase):
         response = self._post('hello world')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # ONBOARDING_GREETING from strings_he contains '\u05d4\u05d9\u05d9' (היי)
+        # ONBOARDING_GREETING from strings_he contains '\u05d4\u05d9\u05d9' (\u05d4\u05d9\u05d9)
         self.assertIn('\u05d4\u05d9\u05d9', content)
 
 
@@ -399,7 +377,7 @@ class BlockCommandTests(TestCase):
         response = self._post('block tomorrow 2-4pm')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Onboarding greeting: '\u05d4\u05d9\u05d9' (היי)
+        # Onboarding greeting: '\u05d4\u05d9\u05d9' (\u05d4\u05d9\u05d9)
         self.assertIn('\u05d4\u05d9\u05d9', content)
 
     def test_block_conflict_text_returns_main_menu(self):
