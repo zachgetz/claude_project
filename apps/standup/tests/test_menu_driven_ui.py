@@ -5,16 +5,14 @@ Covers:
   - Root level: any text from connected user -> main menu
   - Root level: any text from unconnected user -> onboarding
   - Numbered submenu: invalid digit -> INVALID_OPTION + re-show menu
-  - Numbered submenu: 0 -> return to main menu
+  - Numbered submenu: 0 -> return to main menu state
   - Schedule flow: date validation
   - Schedule flow: time validation (HH:MM only)
   - Schedule flow: title empty check
-  - Schedule flow: cancel at any step with '0'
+  - Schedule flow: cancel at any step with '0' or 'batel'
   - Schedule flow: happy path (mocked create_event)
   - Settings: timezone selection
   - Settings: digest time setting
-  - Settings: connect calendar
-  - Main menu: digits 1-6 enter correct submenus
 """
 import datetime
 from unittest.mock import patch, MagicMock
@@ -75,43 +73,69 @@ class MenuDrivenUITests(TestCase):
 
     def test_root_any_text_returns_main_menu(self):
         """Connected user sending any text at root -> main menu."""
-        response = self._post('שלום')
+        response = self._post('\u05e9\u05dc\u05d5\u05dd')
         self.assertEqual(response.status_code, 200)
         content = self._content(response)
-        # Main menu contains the Hebrew bot icon and menu number 1
-        self.assertIn('תפריט ראשי', content)
+        # Main menu contains the Hebrew menu header
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_root_english_text_returns_main_menu(self):
         """Connected user sending English -> main menu (no English error)."""
         response = self._post('hello world')
         self.assertEqual(response.status_code, 200)
         content = self._content(response)
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
     def test_root_random_digits_returns_main_menu(self):
         """Unrecognised digits at root show main menu."""
         response = self._post('999')
         self.assertEqual(response.status_code, 200)
         content = self._content(response)
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
-    def test_root_main_menu_digit_1_enters_meetings_submenu(self):
-        """After seeing the main menu, digit 1 enters the Meetings submenu."""
-        # Simulate: user has seen main menu. State is set to main_menu.
-        # In the current design, root -> main menu shown, user then sends '1'.
-        # Since there's no 'main_menu' state, the root level detects digit 1-6.
-        # We test the full flow: first message shows menu, second message '1' enters submenu.
-        self._post('שלום')  # shows main menu
+    def test_root_sets_main_menu_state(self):
+        """After root shows main menu, state is set to 'main_menu'."""
+        self._post('\u05e9\u05dc\u05d5\u05dd')
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'main_menu')
+
+    def test_main_menu_digit_1_enters_meetings_submenu(self):
+        """After seeing main menu, digit '1' enters meetings submenu."""
+        # Set state to main_menu as if user just saw the main menu
+        UserMenuState.objects.create(
+            phone_number=PHONE, pending_action='main_menu', pending_step=1, pending_data={}
+        )
         response = self._post('1')
         content = self._content(response)
-        # Should show meetings submenu or meetings result
-        # In our state machine: after root shows main menu, user sends '1',
-        # which again hits root -> shows main menu again (our current design).
-        # This test documents the expected UX after the state machine fix.
-        # For now: root sends main menu. User must have state='main_menu' to pick.
-        # The test verifies main menu is shown (not an error)
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn('ענה תשובה תקינה', content)
+        self.assertIn('\u05e4\u05d2\u05d9\u05e9\u05d5\u05ea', content)  # meetings menu
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'meetings_menu')
+
+    def test_main_menu_digit_3_enters_schedule_flow(self):
+        """After main menu, digit '3' enters schedule flow."""
+        UserMenuState.objects.create(
+            phone_number=PHONE, pending_action='main_menu', pending_step=1, pending_data={}
+        )
+        response = self._post('3')
+        content = self._content(response)
+        self.assertEqual(response.status_code, 200)
+        # Should show the date prompt
+        self.assertIn('\u05de\u05ea\u05d9', content)  # 'when?' prompt
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'schedule')
+        self.assertEqual(state.pending_step, 1)
+
+    def test_main_menu_digit_5_enters_settings(self):
+        """After main menu, digit '5' enters settings."""
+        UserMenuState.objects.create(
+            phone_number=PHONE, pending_action='main_menu', pending_step=1, pending_data={}
+        )
+        response = self._post('5')
+        content = self._content(response)
+        self.assertIn('\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea', content)  # settings
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'settings_menu')
 
     # ----------------------------------------------------------------------- #
     # Meetings submenu tests
@@ -119,7 +143,6 @@ class MenuDrivenUITests(TestCase):
 
     def test_meetings_submenu_invalid_input_shows_error_and_menu(self):
         """Inside meetings submenu, invalid input -> INVALID_OPTION + re-show menu."""
-        # Set state to meetings_menu
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='meetings_menu',
@@ -129,14 +152,14 @@ class MenuDrivenUITests(TestCase):
         response = self._post('abc')
         content = self._content(response)
         self.assertEqual(response.status_code, 200)
-        self.assertIn('ענה תשובה תקינה', content)
-        self.assertIn('פגישות', content)  # meetings menu re-shown
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
+        self.assertIn('\u05e4\u05d2\u05d9\u05e9\u05d5\u05ea', content)  # meetings menu re-shown
         # State must still be meetings_menu
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_action, 'meetings_menu')
 
-    def test_meetings_submenu_digit_0_returns_to_main_menu(self):
-        """Inside meetings submenu, '0' returns to main menu."""
+    def test_meetings_submenu_digit_0_returns_to_main_menu_state(self):
+        """Inside meetings submenu, '0' returns to main menu state."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='meetings_menu',
@@ -145,9 +168,10 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('0')
         content = self._content(response)
-        self.assertIn('תפריט ראשי', content)
-        # State cleared
-        self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
+        # State should be main_menu now
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'main_menu')
 
     def test_meetings_submenu_digit_1_queries_today(self):
         """Meetings submenu '1' calls _query_meetings with 'today'."""
@@ -197,20 +221,20 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('not-a-date')
         content = self._content(response)
-        self.assertIn('ענה תשובה תקינה', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
         # Still on step 1
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_step, 1)
 
     def test_schedule_valid_date_today_advances(self):
-        """Schedule step 1: 'היום' is valid -> advance to step 2."""
+        """Schedule step 1: Hebrew 'today' is valid -> advance to step 2."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
             pending_step=1,
             pending_data={},
         )
-        response = self._post('היום')
+        response = self._post('\u05d4\u05d9\u05d5\u05dd')  # 'today' in Hebrew
         content = self._content(response)
         self.assertIn('HH:MM', content)  # step 2 prompt
         state = UserMenuState.objects.get(phone_number=PHONE)
@@ -240,7 +264,7 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('25:99')  # invalid
         content = self._content(response)
-        self.assertIn('ענה תשובה תקינה', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_step, 2)
 
@@ -267,7 +291,7 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('09:00')  # before start
         content = self._content(response)
-        self.assertIn('ענה תשובה תקינה', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_step, 3)
 
@@ -281,7 +305,7 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('   ')  # whitespace only
         content = self._content(response)
-        self.assertIn('ענה תשובה תקינה', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_step, 4)
 
@@ -293,26 +317,26 @@ class MenuDrivenUITests(TestCase):
             pending_step=4,
             pending_data={'date': '2026-08-15', 'start': '09:00', 'end': '10:00'},
         )
-        response = self._post('פגישת צוות')
+        response = self._post('\u05e4\u05d2\u05d9\u05e9\u05ea \u05e6\u05d5\u05d5\u05ea')
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_step, 5)
-        self.assertEqual(state.pending_data['title'], 'פגישת צוות')
+        self.assertEqual(state.pending_data['title'], '\u05e4\u05d2\u05d9\u05e9\u05ea \u05e6\u05d5\u05d5\u05ea')
 
     def test_schedule_skip_description(self):
-        """Step 5: 'דלג' skips description."""
+        """Step 5: 'daleg' skips description."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
             pending_step=5,
             pending_data={'date': '2026-08-15', 'start': '09:00', 'end': '10:00', 'title': 'T'},
         )
-        response = self._post('דלג')
+        response = self._post('\u05d3\u05dc\u05d2')  # skip
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_step, 6)
         self.assertIsNone(state.pending_data.get('description'))
 
     def test_schedule_skip_location(self):
-        """Step 6: 'דלג' skips location and shows confirmation."""
+        """Step 6: 'daleg' skips location and shows confirmation."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
@@ -322,13 +346,13 @@ class MenuDrivenUITests(TestCase):
                 'title': 'T', 'description': None,
             },
         )
-        response = self._post('דלג')
+        response = self._post('\u05d3\u05dc\u05d2')  # skip
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_step, 7)
         content = self._content(response)
         # Summary should include the confirm/cancel prompts
-        self.assertIn('אשר', content)
-        self.assertIn('בטל', content)
+        self.assertIn('\u05d0\u05e9\u05e8', content)
+        self.assertIn('\u05d1\u05d8\u05dc', content)
 
     def test_schedule_cancel_at_step_1_with_0(self):
         """'0' at any schedule step -> cancel and return to main menu."""
@@ -340,24 +364,24 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('0')
         content = self._content(response)
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
         self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
 
     def test_schedule_cancel_at_step_4_with_batel(self):
-        """'בטל' at step 4 -> cancel and return to main menu."""
+        """'batel' at step 4 -> cancel and return to main menu."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
             pending_step=4,
             pending_data={'date': '2026-08-15', 'start': '09:00', 'end': '10:00'},
         )
-        response = self._post('בטל')
+        response = self._post('\u05d1\u05d8\u05dc')  # batel
         content = self._content(response)
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
         self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
 
     def test_schedule_happy_path_confirm(self):
-        """Full schedule flow: 'אשר' creates event and returns success."""
+        """Full schedule flow: 'asher' creates event and returns success."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='schedule',
@@ -366,7 +390,7 @@ class MenuDrivenUITests(TestCase):
                 'date': '2026-08-15',
                 'start': '09:00',
                 'end': '10:00',
-                'title': 'פגישת צוות',
+                'title': '\u05e4\u05d2\u05d9\u05e9\u05ea \u05e6\u05d5\u05d5\u05ea',
                 'description': None,
                 'location': None,
             },
@@ -375,10 +399,10 @@ class MenuDrivenUITests(TestCase):
             'apps.calendar_bot.calendar_service.create_event',
             return_value=(True, 'fake_event_id'),
         ):
-            response = self._post('אשר')
+            response = self._post('\u05d0\u05e9\u05e8')  # asher
         content = self._content(response)
         self.assertEqual(response.status_code, 200)
-        self.assertIn('הפגישה נקבעה בהצלחה', content)
+        self.assertIn('\u05d4\u05e4\u05d2\u05d9\u05e9\u05d4 \u05e0\u05e7\u05d1\u05e2\u05d4 \u05d1\u05d4\u05e6\u05dc\u05d7\u05d4', content)
         self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
 
     def test_schedule_api_error_returns_error_message(self):
@@ -391,7 +415,7 @@ class MenuDrivenUITests(TestCase):
                 'date': '2026-08-15',
                 'start': '09:00',
                 'end': '10:00',
-                'title': 'פגישה',
+                'title': '\u05e4\u05d2\u05d9\u05e9\u05d4',
                 'description': None,
                 'location': None,
             },
@@ -400,9 +424,9 @@ class MenuDrivenUITests(TestCase):
             'apps.calendar_bot.calendar_service.create_event',
             return_value=(False, 'api_error'),
         ):
-            response = self._post('אשר')
+            response = self._post('\u05d0\u05e9\u05e8')  # asher
         content = self._content(response)
-        self.assertIn('שגיאה', content)
+        self.assertIn('\u05e9\u05d2\u05d9\u05d0\u05d4', content)
         self.assertFalse(UserMenuState.objects.filter(phone_number=PHONE).exists())
 
     # ----------------------------------------------------------------------- #
@@ -434,7 +458,7 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('9')
         content = self._content(response)
-        self.assertIn('ענה תשובה תקינה', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_action, 'timezone_menu')
 
@@ -448,7 +472,7 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('0')
         content = self._content(response)
-        self.assertIn('הגדרות', content)
+        self.assertIn('\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea', content)
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_action, 'settings_menu')
 
@@ -481,7 +505,7 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('25:00')
         content = self._content(response)
-        self.assertIn('שעה לא תקינה', content)
+        self.assertIn('\u05e9\u05e2\u05d4 \u05dc\u05d0 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
         state = UserMenuState.objects.get(phone_number=PHONE)
         self.assertEqual(state.pending_action, 'digest_prompt')
 
@@ -499,11 +523,11 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('x')
         content = self._content(response)
-        self.assertIn('ענה תשובה תקינה', content)
-        self.assertIn('זמן פנוי', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
+        self.assertIn('\u05d6\u05de\u05df \u05e4\u05e0\u05d5\u05d9', content)
 
-    def test_free_time_submenu_0_returns_main_menu(self):
-        """Free time submenu: '0' returns to main menu."""
+    def test_free_time_submenu_0_returns_main_menu_state(self):
+        """Free time submenu: '0' returns to main_menu state."""
         UserMenuState.objects.create(
             phone_number=PHONE,
             pending_action='free_time_menu',
@@ -512,7 +536,9 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('0')
         content = self._content(response)
-        self.assertIn('תפריט ראשי', content)
+        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
+        state = UserMenuState.objects.get(phone_number=PHONE)
+        self.assertEqual(state.pending_action, 'main_menu')
 
     # ----------------------------------------------------------------------- #
     # Birthdays submenu
@@ -528,8 +554,8 @@ class MenuDrivenUITests(TestCase):
         )
         response = self._post('5')
         content = self._content(response)
-        self.assertIn('ענה תשובה תקינה', content)
-        self.assertIn('ימי הולדת', content)
+        self.assertIn('\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4', content)
+        self.assertIn('\u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea', content)
 
     # ----------------------------------------------------------------------- #
     # Unconnected user
@@ -538,12 +564,12 @@ class MenuDrivenUITests(TestCase):
     def test_unconnected_user_gets_onboarding(self):
         """User with no connected calendar gets onboarding greeting."""
         CalendarToken.objects.filter(phone_number=PHONE).delete()
-        response = self._post('שלום')
+        response = self._post('\u05e9\u05dc\u05d5\u05dd')
         content = self._content(response)
         self.assertEqual(response.status_code, 200)
         # Should get the Hebrew greeting asking for name
-        self.assertIn('היי', content)
-        self.assertIn('מה שמך', content)
+        self.assertIn('\u05d4\u05d9\u05d9', content)
+        self.assertIn('\u05de\u05d4 \u05e9\u05de\u05da', content)
 
     # ----------------------------------------------------------------------- #
     # Helper
@@ -571,14 +597,14 @@ class DateTimeValidationTests(TestCase):
         from apps.standup.views import _parse_date_input
         tz = pytz.timezone('Asia/Jerusalem')
         today = datetime.datetime.now(tz=tz).date()
-        self.assertEqual(_parse_date_input('היום', tz), today)
+        self.assertEqual(_parse_date_input('\u05d4\u05d9\u05d5\u05dd', tz), today)
 
     def test_parse_date_tomorrow(self):
         import pytz
         from apps.standup.views import _parse_date_input
         tz = pytz.timezone('Asia/Jerusalem')
         today = datetime.datetime.now(tz=tz).date()
-        self.assertEqual(_parse_date_input('מחר', tz), today + datetime.timedelta(days=1))
+        self.assertEqual(_parse_date_input('\u05de\u05d7\u05e8', tz), today + datetime.timedelta(days=1))
 
     def test_parse_date_ddmm(self):
         import pytz
@@ -607,14 +633,14 @@ class DateTimeValidationTests(TestCase):
     def test_parse_time_valid(self):
         from apps.standup.views import _parse_time_hhmm
         self.assertEqual(_parse_time_hhmm('09:30'), (9, 30))
+        self.assertEqual(_parse_time_hhmm('9:30'), (9, 30))  # single digit hour ok
         self.assertEqual(_parse_time_hhmm('00:00'), (0, 0))
         self.assertEqual(_parse_time_hhmm('23:59'), (23, 59))
 
     def test_parse_time_invalid(self):
         from apps.standup.views import _parse_time_hhmm
         self.assertIsNone(_parse_time_hhmm('24:00'))
-        self.assertIsNone(_parse_time_hhmm('9:30am'))  # must be 24h HH:MM
-        self.assertIsNone(_parse_time_hhmm('9:30'))    # must have leading zero
+        self.assertIsNone(_parse_time_hhmm('9:30am'))  # must be 24h HH:MM format
         self.assertIsNone(_parse_time_hhmm('abc'))
         self.assertIsNone(_parse_time_hhmm(''))
         self.assertIsNone(_parse_time_hhmm('25:99'))

@@ -7,7 +7,7 @@ State machine:
  - Inside a numbered submenu: only valid digits (including 0) accepted.
    Any other input -> INVALID_OPTION + re-show current menu.
  - Inside Schedule flow (action='schedule'): free text on text steps,
-   structured validation on date/time steps. 0 or 'Cancel' at any step -> cancel.
+   structured validation on date/time steps. 0 or 'batel' at any step -> cancel.
 
 All bot response text is 100% Hebrew. Only exception: user-provided content
 (e.g. event title typed in English).
@@ -25,6 +25,17 @@ from apps.standup.permissions import TwilioSignaturePermission
 from apps.standup.models import StandupEntry
 
 logger = logging.getLogger(__name__)
+
+# --------------------------------------------------------------------------- #
+# Back-compat module-level constants (imported by existing tests)
+# --------------------------------------------------------------------------- #
+
+import apps.standup.strings_he as _strings_he
+
+MENU_TEXT = _strings_he.MAIN_MENU_TEXT
+HELP_TEXT = _strings_he.HELP_TEXT
+# MENU_TRIGGERS kept for any code that imported it:
+MENU_TRIGGERS = {'menu', 'options', 'calendar', '0'}
 
 # --------------------------------------------------------------------------- #
 # Timezone map for settings submenu (index 0 = option 1)
@@ -121,7 +132,7 @@ def _parse_date_input(text, user_tz):
 
 
 def _parse_time_hhmm(text):
-    """Accept HH:MM (24h). Returns (h, m) tuple or None."""
+    """Accept HH:MM or H:MM (24h). Returns (h, m) tuple or None."""
     text = text.strip()
     m = re.match(r'^(\d{1,2}):(\d{2})$', text)
     if not m:
@@ -386,7 +397,7 @@ class WhatsAppWebhookView(APIView):
         import apps.standup.strings_he as s
         from apps.calendar_bot.calendar_service import get_user_tz, create_event
 
-        # Cancel anytime with 0 or 'batel'
+        # Cancel anytime with 0 or 'batel' (Hebrew: cancel)
         if body_stripped in ('0', '\u05d1\u05d8\u05dc'):
             _clear_state(from_number)
             return _xml(s.SCHEDULE_CANCELLED + '\n' + s.MAIN_MENU_TEXT)
@@ -708,7 +719,6 @@ class WhatsAppWebhookView(APIView):
 
         deleted, _ = CalendarToken.objects.filter(phone_number=from_number).delete()
         logger.info('Calendar disconnected for phone=%s (deleted %d tokens)', from_number, deleted)
-        # Compose a Hebrew disconnect confirmation message
         msg = (
             '\u2705 \u05d4\u05d9\u05d5\u05de\u05df \u05e0\u05d5\u05ea\u05e7.\n\n'
             + s.MAIN_MENU_TEXT
