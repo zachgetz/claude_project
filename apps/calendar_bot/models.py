@@ -17,6 +17,10 @@ class CalendarToken(models.Model):
     digest_hour = models.IntegerField(default=8)
     digest_minute = models.IntegerField(default=0)
     digest_always = models.BooleanField(default=False)
+    # Menu state machine fields
+    pending_action = models.CharField(max_length=50, null=True, blank=True)
+    pending_step = models.IntegerField(null=True, blank=True)
+    pending_data = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -25,6 +29,21 @@ class CalendarToken(models.Model):
 
     def __str__(self):
         return f'CalendarToken({self.phone_number})'
+
+
+class UserMenuState(models.Model):
+    """
+    Stores the current menu state for a phone number.
+    One row per phone_number; upserted on every state change.
+    """
+    phone_number = models.CharField(max_length=30, primary_key=True)
+    pending_action = models.CharField(max_length=50, null=True, blank=True)
+    pending_step = models.IntegerField(null=True, blank=True)
+    pending_data = models.JSONField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'UserMenuState({self.phone_number}, action={self.pending_action}, step={self.pending_step})'
 
 
 class CalendarEventSnapshot(models.Model):
