@@ -3,7 +3,7 @@ from django.utils import timezone
 
 
 class StandupEntry(models.Model):
-    phone_number = models.CharField(max_length=20)
+    phone_number = models.CharField(max_length=30)
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     week_number = models.IntegerField()
