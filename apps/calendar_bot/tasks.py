@@ -6,7 +6,7 @@ from celery import shared_task
 from django.conf import settings
 from twilio.rest import Client
 
-from .models import CalendarToken
+from .models import CalendarToken, CalendarWatchChannel
 from .calendar_service import get_calendar_service, get_user_tz
 
 logger = logging.getLogger(__name__)
@@ -103,3 +103,32 @@ def _send_digest_for_user(client, from_number, token):
         body=message,
     )
     logger.info('Morning digest sent to %s (%d events)', phone_number, len(items))
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def renew_watch_channels(self):
+    """
+    Runs daily. Finds CalendarWatchChannel records expiring within 24 hours
+    and renews them by calling register_watch_channel().
+    """
+    from .sync import register_watch_channel
+
+    now = datetime.datetime.now(tz=pytz.UTC)
+    expiry_threshold = now + datetime.timedelta(hours=24)
+
+    expiring_channels = CalendarWatchChannel.objects.filter(
+        expiry__lt=expiry_threshold
+    )
+
+    for channel in expiring_channels:
+        phone_number = channel.phone_number
+        try:
+            # register_watch_channel deletes old channels and creates a new one
+            register_watch_channel(phone_number)
+            logger.info('Renewed watch channel for %s', phone_number)
+        except Exception as exc:
+            logger.exception('Failed to renew watch channel for %s: %s', phone_number, exc)
+            try:
+                raise self.retry(exc=exc)
+            except Exception:
+                pass

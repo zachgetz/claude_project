@@ -4,4 +4,5 @@ from . import views
 urlpatterns = [
     path('auth/start/', views.calendar_auth_start, name='calendar_auth_start'),
     path('auth/callback/', views.calendar_auth_callback, name='calendar_auth_callback'),
+    path('notifications/', views.calendar_notifications, name='calendar_notifications'),
 ]
