@@ -9,6 +9,7 @@ from twilio.rest import Client
 
 from .models import CalendarToken, CalendarWatchChannel
 from .calendar_service import get_events_for_date, get_user_tz
+from .sync import register_watch_channel
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,6 @@ def renew_watch_channels(self):
     and renews them by calling register_watch_channel(token).
     Skips NULL-token channels (legacy/orphaned).
     """
-    from .sync import register_watch_channel
 
     logger.info('renew_watch_channels task started')
 
