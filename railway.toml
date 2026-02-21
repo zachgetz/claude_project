@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "bash scripts/start.sh"
+startCommand = "python scripts/start.py"
 healthcheckPath = "/health/"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"
