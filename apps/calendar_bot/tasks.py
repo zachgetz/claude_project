@@ -106,6 +106,10 @@ def _send_digest_for_phone(client, from_number, phone_number, primary_token):
         len(items),
     )
 
+    # Build name part safely (token.name may not exist yet — TZA-92 adds it)
+    user_name = getattr(primary_token, 'name', '') or ''
+    name_part = f' {user_name}' if user_name else ''
+
     # Skip if no meetings and user hasn't opted into always-send
     if not items and not primary_token.digest_always:
         logger.info(
@@ -116,14 +120,31 @@ def _send_digest_for_phone(client, from_number, phone_number, primary_token):
         return
 
     if not items:
-        message = 'Good morning! No meetings today \U0001f389'
+        message = f'\u2600\ufe0f \u1489\u1493\u1511\u122e \u1496\u14d3\u1489{name_part}! \U0001f31f\n\n\U0001f389 \u14d0\u14f7 \u1450\u14af\u129d\u14f7\u1473 \u1492\u12ed\u14d3\u149d \u2014 \u1514\u1492\u14f7\u1492!'
     else:
-        lines = ['Good morning! Your meetings today:']
+        # Count timed events (those with an actual start time, not all-day)
+        timed_count = sum(1 for ev in items if ev.get('start_str', 'All day') != 'All day')
+
+        # Opening greeting
+        greeting = f'\u2600\ufe0f \u1489\u1493\u1511\u122e \u1496\u14d3\u1489{name_part}! \u1502\u1511\u14d3\u1493\u1492 \u1513\u1492\u12ed\u14d3\u149d \u12ed\u1492\u12ed\u1492 \u1502\u148f\u1492\u12eb \U0001f31f\n\n'
+
+        lines = [greeting + '\u1492\u1508\u14af\u14ab\u14d3\u1514 \u1513\u1500\u1498 \u1492\u12ed\u14d3\u149d:']
         for ev in items:
             time_str = ev.get('start_str', 'All day')
             summary = ev.get('summary', '(No title)')
             lines.append(f'{time_str} {summary}')
-        message = '\n'.join(lines)
+
+        # Closing line based on timed meeting count
+        if timed_count == 0:
+            closing = '\n\n\U0001f389 \u14d0\u14f7 \u1450\u14af\u129d\u14f7\u1473 \u1492\u12ed\u14d3\u149d \u2014 \u1514\u1492\u14f7\u1492!'
+        elif timed_count <= 4:
+            closing = '\n\n\u2728 \u12ed\u14d3\u149d \u1508\u122e\u148f\u148e\u1511\u1496\u12eb\u1489\u12eb \u1500\u1508\u14f7\u12eb\u1498!'
+        elif timed_count <= 6:
+            closing = '\n\n\U0001f4aa \u12ed\u14d3\u149d \u129b\u1502\u1493\u1505 \u2014 \u1514\u152e\u1499\u122e \u1500\u14f7\u1513\u14d3\u149d \u1489\u12ed\u14f7 \u1450\u14af\u129d\u14f7\u1473 \U0001f9d8'
+        else:
+            closing = '\n\n\U0001f525 \u1502\u122e\u1514\u14d3\u149d \u1450\u14af\u129d\u14f7\u1473 \u1492\u12ed\u14d3\u149d! \u1513\u1502\u14d3\u122e \u129b\u1500 \u129b\u152e\u1502\u1498'
+
+        message = '\n'.join(lines) + closing
 
     try:
         client.messages.create(
