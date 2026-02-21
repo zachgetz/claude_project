@@ -11,34 +11,40 @@ from .models import CalendarWatchChannel
 logger = logging.getLogger(__name__)
 
 
-def register_watch_channel(phone_number):
+def register_watch_channel(token):
     """
-    Calls events.watch() on Google Calendar API.
-    Uses WEBHOOK_BASE_URL setting + '/calendar/notifications/' as the address.
-    Stores channel_id, resource_id, expiry in CalendarWatchChannel.
+    Calls events.watch() on Google Calendar API for the given CalendarToken.
+    Deletes only THIS token's existing channels before registering a new one.
+    Stores channel_id, resource_id, expiry, and the token FK in CalendarWatchChannel.
     Returns the new CalendarWatchChannel instance.
     """
     from .models import CalendarWatchChannel
 
-    logger.info('register_watch_channel called: phone=%s', phone_number)
+    phone_number = token.phone_number
+    logger.info(
+        'register_watch_channel called: phone=%s email=%s',
+        phone_number,
+        token.account_email,
+    )
 
-    # Delete any existing channels for this user before registering a new one
-    deleted_count, _ = CalendarWatchChannel.objects.filter(phone_number=phone_number).delete()
+    # Delete only the channels belonging to THIS token
+    deleted_count, _ = CalendarWatchChannel.objects.filter(token=token).delete()
     if deleted_count:
         logger.info(
-            'Deleted %d existing watch channel(s) for phone=%s before re-registering',
+            'Deleted %d existing watch channel(s) for phone=%s email=%s before re-registering',
             deleted_count,
             phone_number,
+            token.account_email,
         )
 
-    service = get_calendar_service(phone_number)
+    service = get_calendar_service(token)
 
     webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', 'https://localhost')
     notification_url = webhook_base_url.rstrip('/') + '/calendar/notifications/'
 
-    # Create a new channel
-    new_channel = CalendarWatchChannel(phone_number=phone_number)
-    new_channel.save()  # saves to get channel_id UUID assigned
+    # Create a new channel record (save to get channel_id UUID assigned)
+    new_channel = CalendarWatchChannel(phone_number=phone_number, token=token)
+    new_channel.save()
 
     channel_id_str = str(new_channel.channel_id)
 
@@ -53,8 +59,9 @@ def register_watch_channel(phone_number):
         ).execute()
     except Exception as exc:
         logger.exception(
-            'Failed to register watch channel for phone=%s channel_id=%s: %s',
+            'Failed to register watch channel for phone=%s email=%s channel_id=%s: %s',
             phone_number,
+            token.account_email,
             channel_id_str,
             exc,
         )
@@ -72,8 +79,9 @@ def register_watch_channel(phone_number):
     new_channel.save()
 
     logger.info(
-        'Registered watch channel: phone=%s channel_id=%s expiry=%s',
+        'Registered watch channel: phone=%s email=%s channel_id=%s expiry=%s',
         phone_number,
+        token.account_email,
         channel_id_str,
         expiry_dt,
     )
@@ -84,8 +92,6 @@ def send_change_alerts(phone_number, changes):
     """
     Takes list of changes from sync_calendar_snapshot().
     Only alerts for events today or tomorrow (ignores next-week events).
-    Debounce: skip if same event_id was alerted less than 5 minutes ago
-    (checks CalendarEventSnapshot.updated_at).
     Sends alerts via Twilio WhatsApp.
     """
     if not changes:
