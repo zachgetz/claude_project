@@ -184,6 +184,7 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         response.message(
             f'Connect your Google Calendar here:\n{auth_url}\n\n'
+            '\u26a0\ufe0f Google may show a safety warning. Tap \'Advanced\' \u2192 \'Go to app (unsafe)\' to continue.\n\n'
             'To add a second account, visit the same link after connecting the first.'
         )
         return HttpResponse(str(response), content_type='application/xml')
