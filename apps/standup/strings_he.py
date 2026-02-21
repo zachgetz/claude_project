@@ -2,150 +2,183 @@
 Hebrew (he) string constants for the WhatsApp calendar bot.
 All strings are written in correct Unicode logical order.
 WhatsApp renders Hebrew RTL automatically — do not add RTL markers.
-Designed by the UX Agent — native Hebrew speaker.
+
+TZA-110: fully menu-driven redesign — ALL bot text is Hebrew.
 """
 
-# ── Menu ──────────────────────────────────────────────────────────────────────
+# ── Main Menu ─────────────────────────────────────────────────────────────────
 
-MENU_TEXT = (
-    "\U0001f4c5 היי! מה תרצה לדעת?\n\n"
-    "1. \U0001f4c5 פגישות היום\n"
-    "2. \U0001f4c5 פגישות מחר\n"
-    "3. \U0001f5d3\ufe0f השבוע\n"
-    "4. \u23ed\ufe0f הפגישה הבאה\n"
-    "5. \U0001f550 זמן פנוי היום\n"
-    "6. \u2753 עזרה\n"
-    "7. \U0001f30d שינוי אזור זמן\n"
-    "8. \U0001f382 ימי הולדת השבוע\n"
-    "\n"
-    "שלח 0 או 'תפריט' לחזרה לכאן."
+MAIN_MENU_TEXT = (
+    "\U0001f916 \u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9:\n"
+    "1. \U0001f4c5 \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea\n"
+    "2. \u23f0 \u05d6\u05de\u05df \u05e4\u05e0\u05d5\u05d9\n"
+    "3. \u2795 \u05e7\u05d1\u05e2 \u05e4\u05d2\u05d9\u05e9\u05d4\n"
+    "4. \U0001f382 \u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea\n"
+    "5. \u2699\ufe0f \u05d4\u05d2\u05d3\u05e8\u05d5\u05ea\n"
+    "6. \u2753 \u05e2\u05d6\u05e8\u05d4"
 )
 
-# ── Help ──────────────────────────────────────────────────────────────────────
+# Back-compat alias used by existing tests / tasks
+MENU_TEXT = MAIN_MENU_TEXT
+
+# ── Submenu 1: Meetings ───────────────────────────────────────────────────────
+
+MEETINGS_MENU_TEXT = (
+    "\U0001f4c5 \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea:\n"
+    "1. \u05d4\u05d9\u05d5\u05dd\n"
+    "2. \u05de\u05d7\u05e8\n"
+    "3. \u05d4\u05e9\u05d1\u05d5\u05e2\n"
+    "4. \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4 \u05d4\u05d1\u05d0\u05d4\n"
+    "0. \u05d7\u05d6\u05e8\u05d4 \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8"
+)
+
+# ── Submenu 2: Free time ─────────────────────────────────────────────────────
+
+FREE_TIME_MENU_TEXT = (
+    "\u23f0 \u05d6\u05de\u05df \u05e4\u05e0\u05d5\u05d9:\n"
+    "1. \u05d4\u05d9\u05d5\u05dd\n"
+    "2. \u05de\u05d7\u05e8\n"
+    "3. \u05d4\u05e9\u05d1\u05d5\u05e2\n"
+    "0. \u05d7\u05d6\u05e8\u05d4 \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8"
+)
+
+# ── Submenu 3: Schedule meeting ───────────────────────────────────────────────
+
+SCHEDULE_STEP1 = "\u05de\u05ea\u05d9? (\u05d4\u05d9\u05d5\u05dd / \u05de\u05d7\u05e8 / DD/MM / DD/MM/YYYY)"
+SCHEDULE_STEP2 = "\u05e9\u05e2\u05ea \u05d4\u05ea\u05d7\u05dc\u05d4? (HH:MM)"
+SCHEDULE_STEP3 = "\u05e9\u05e2\u05ea \u05e1\u05d9\u05d5\u05dd? (HH:MM)"
+SCHEDULE_STEP4 = "\u05de\u05d4 \u05db\u05d5\u05ea\u05e8\u05ea \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4?"
+SCHEDULE_STEP5 = "\u05ea\u05d9\u05d0\u05d5\u05e8 \u05dc\u05e4\u05d2\u05d9\u05e9\u05d4? (\u05e9\u05dc\u05d7 '\u05d3\u05dc\u05d2' \u05dc\u05d3\u05d9\u05dc\u05d5\u05d2)"
+SCHEDULE_STEP6 = "\u05de\u05d9\u05e7\u05d5\u05dd \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4? (\u05e9\u05dc\u05d7 '\u05d3\u05dc\u05d2' \u05dc\u05d3\u05d9\u05dc\u05d5\u05d2)"
+SCHEDULE_INVALID = "\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4 \u05d1\u05d1\u05e7\u05e9\u05d4."
+SCHEDULE_CANCELLED = "\u05d4\u05e4\u05e2\u05d5\u05dc\u05d4 \u05d1\u05d5\u05d8\u05dc\u05d4."
+SCHEDULE_CREATED = "\u2705 \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4 \u05e0\u05e7\u05d1\u05e2\u05d4 \u05d1\u05d4\u05e6\u05dc\u05d7\u05d4!\n\U0001f4c5 {date}  \U0001f550 {start}\u2013{end}  \U0001f4dd {title}"
+SCHEDULE_ERROR = "\u05d0\u05d9\u05e8\u05e2\u05d4 \u05e9\u05d2\u05d9\u05d0\u05d4 \u05d1\u05e7\u05d1\u05d9\u05e2\u05ea \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4. \u05d0\u05e0\u05d0 \u05e0\u05e1\u05d4 \u05e9\u05d5\u05d1."
+
+# ── Submenu 4: Birthdays ──────────────────────────────────────────────────────
+
+BIRTHDAYS_MENU_TEXT = (
+    "\U0001f382 \u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea:\n"
+    "1. \u05d4\u05e9\u05d1\u05d5\u05e2\n"
+    "2. \u05d4\u05d7\u05d5\u05d3\u05e9\n"
+    "0. \u05d7\u05d6\u05e8\u05d4 \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8"
+)
+
+# ── Submenu 5: Settings ───────────────────────────────────────────────────────
+
+SETTINGS_MENU_TEXT = (
+    "\u2699\ufe0f \u05d4\u05d2\u05d3\u05e8\u05d5\u05ea:\n"
+    "1. \U0001f30d \u05d0\u05d6\u05d5\u05e8 \u05d6\u05de\u05df\n"
+    "2. \u23f0 \u05e9\u05e2\u05ea \u05d4\u05ea\u05e8\u05d0\u05d4 \u05d9\u05d5\u05de\u05d9\u05ea\n"
+    "3. \U0001f517 \u05d7\u05d1\u05e8 \u05d9\u05d5\u05de\u05df \u05e0\u05d5\u05e1\u05e3\n"
+    "4. \u274c \u05e0\u05ea\u05e7 \u05d9\u05d5\u05de\u05df\n"
+    "0. \u05d7\u05d6\u05e8\u05d4 \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8"
+)
+
+TIMEZONE_MENU_TEXT = (
+    "\U0001f30d \u05d1\u05d7\u05e8 \u05d0\u05d6\u05d5\u05e8 \u05d6\u05de\u05df:\n"
+    "1. \u05d9\u05e9\u05e8\u05d0\u05dc (Asia/Jerusalem)\n"
+    "2. \u05dc\u05d5\u05e0\u05d3\u05d5\u05df (Europe/London)\n"
+    "3. \u05e0\u05d9\u05d5 \u05d9\u05d5\u05e8\u05e7 (America/New_York)\n"
+    "4. \u05e4\u05e8\u05d9\u05d6 (Europe/Paris)\n"
+    "5. \u05d3\u05d5\u05d1\u05d0\u05d9 (Asia/Dubai)\n"
+    "6. \u05dc\u05d5\u05e1 \u05d0\u05e0\u05d2'\u05dc\u05e1 (America/Los_Angeles)\n"
+    "0. \u05d7\u05d6\u05e8\u05d4"
+)
+
+DISCONNECT_CONFIRM_TEXT = (
+    "\u05dc\u05e0\u05ea\u05e7 \u05d0\u05ea \u05d4\u05d9\u05d5\u05de\u05df?\n"
+    "1. \u05db\u05df, \u05e0\u05ea\u05e7\n"
+    "2. \u05dc\u05d0, \u05d7\u05d6\u05e8\u05d4"
+)
+
+DIGEST_PROMPT = "\u05d1\u05d0\u05d9\u05d6\u05d5 \u05e9\u05e2\u05d4 \u05dc\u05e9\u05dc\u05d5\u05d7 \u05d0\u05ea \u05d4\u05d4\u05ea\u05e8\u05d0\u05d4 \u05d4\u05d9\u05d5\u05de\u05d9\u05ea? (HH:MM)"
+DIGEST_INVALID = "\u05e9\u05e2\u05d4 \u05dc\u05d0 \u05ea\u05e7\u05d9\u05e0\u05d4. \u05e0\u05e1\u05d4 \u05dc\u05d3\u05d5\u05d2\u05de\u05d0: 07:30"
+
+# ── General ───────────────────────────────────────────────────────────────────
+
+INVALID_OPTION = "\u05e2\u05e0\u05d4 \u05ea\u05e9\u05d5\u05d1\u05d4 \u05ea\u05e7\u05d9\u05e0\u05d4 \u05d1\u05d1\u05e7\u05e9\u05d4."
+NO_CALENDAR_CONNECTED_MENU = (
+    "\U0001f4f2 \u05d0\u05d9\u05df \u05d9\u05d5\u05de\u05df \u05de\u05d7\u05d5\u05d1\u05e8. \u05e9\u05dc\u05d7 \"\u05d7\u05d1\u05e8 \u05d9\u05d5\u05de\u05df\" \u05dc\u05d7\u05d9\u05d1\u05d5\u05e8."
+)
+
+# ── Menu ─────────────────────────────────── (back-compat)
 
 HELP_TEXT = (
-    "\U0001f4c5 העוזר שלך ללוח השנה:\n"
+    "\U0001f4c5 \u05d4\u05e2\u05d5\u05d6\u05e8 \u05e9\u05dc\u05da \u05dc\u05dc\u05d5\u05d7 \u05d4\u05e9\u05e0\u05d4:\n"
     "\n"
-    "\U0001f4cb שאילתות:\n"
-    "\u2022 \"היום\" / \"פגישות\" \u2014 לוח היום\n"
-    "\u2022 \"מחר\" \u2014 פגישות מחר\n"
-    "\u2022 \"שישי\" / \"פגישות חמישי\" \u2014 כל יום השבוע\n"
-    "\u2022 \"שני הבא\" \u2014 שבוע הבא\n"
-    "\u2022 \"השבוע\" \u2014 תצוגה שבועית (ראשון\u2013שבת)\n"
-    "\u2022 \"פגישה הבאה\" \u2014 האירוע הקרוב ביותר\n"
-    "\u2022 \"זמן פנוי\" \u2014 חלונות פנויים היום\n"
-    "\n"
-    "\u270f\ufe0f יצירה:\n"
-    "\u2022 \"חסום מחר 14:00-16:00\" \u2014 חסימת זמן\n"
-    "\u2022 \"חסום שישי 10:00 עבודה עמוקה\" \u2014 חסימה עם שם\n"
-    "\n"
-    "\U0001f4f2 חשבונות:\n"
-    "\u2022 \"חבר לוח שנה\" \u2014 הוסף חשבון גוגל\n"
-    "\u2022 \"הלוחות שלי\" \u2014 רשימת חשבונות מחוברים\n"
-    "\u2022 \"הסר לוח שנה [אימייל]\" \u2014 הסר חשבון\n"
-    "\n"
-    "\u2699\ufe0f הגדרות:\n"
-    "\u2022 \"הגדר תקציר 7:30\" \u2014 שינוי שעת הבוקר\n"
-    "\u2022 \"הגדר תקציר כבוי\" \u2014 כיבוי תקציר הבוקר\n"
-    "\u2022 \"הגדר אזור זמן Europe/Jerusalem\" \u2014 שינוי אזור זמן\n"
-    "\n"
-    "שלח 0 או 'תפריט' לתפריט המהיר."
+    "\u05e9\u05dc\u05d7 \u05db\u05dc \u05de\u05e1\u05e4\u05e8 \u05de-0 \u05e2\u05d3 6 \u05dc\u05d1\u05d7\u05d9\u05e8\u05ea \u05d0\u05e4\u05e9\u05e8\u05d5\u05ea \u05de\u05d4\u05ea\u05e4\u05e8\u05d9\u05d8 \u05d4\u05e8\u05d0\u05e9\u05d9.\n"
+    "\u05e9\u05dc\u05d7 0 \u05dc\u05d7\u05d6\u05e8\u05d4 \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8 \u05d4\u05e8\u05d0\u05e9\u05d9."
 )
 
-# ── Timezone sub-menu ─────────────────────────────────────────────────────────
-
-TIMEZONE_SUB_MENU = (
-    "\U0001f550 בחר אזור זמן. שלח את שם העיר:\n"
-    "\u2022 ירושלים\n"
-    "\u2022 לונדון\n"
-    "\u2022 ניו יורק\n"
-    "\n"
-    "או כתוב: set timezone Europe/Paris (לערים אחרות)"
-)
-
-# ── Unrecognized input ────────────────────────────────────────────────────────
-
-UNRECOGNIZED_HINT = "\U0001f914 לא הבנתי. שלח *0* לתפריט."
-
-# ── Onboarding ────────────────────────────────────────────────────────────────
+TIMEZONE_SUB_MENU = TIMEZONE_MENU_TEXT
+UNRECOGNIZED_HINT = "\U0001f914 \u05dc\u05d0 \u05d4\u05d1\u05e0\u05ea\u05d9. \u05e9\u05dc\u05d7 *0* \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8."
 
 ONBOARDING_GREETING = (
-    "\U0001f44b היי! אני העוזר האישי שלך ללוח השנה בוואטסאפ \U0001f916\n\n"
-    "מה שמך?"
+    "\U0001f44b \u05d4\u05d9\u05d9! \u05d0\u05e0\u05d9 \u05d4\u05e2\u05d5\u05d6\u05e8 \u05d4\u05d0\u05d9\u05e9\u05d9 \u05e9\u05dc\u05da \u05dc\u05dc\u05d5\u05d7 \u05d4\u05e9\u05e0\u05d4 \u05d1\u05d5\u05d5\u05d0\u05d8\u05e1\u05d0\u05e4 \U0001f916\n\n"
+    "\u05de\u05d4 \u05e9\u05de\u05da?"
 )
-
-ONBOARDING_NAME_REPROMPT = "\U0001f914 לא הבנתי — מה שמך?"
-
+ONBOARDING_NAME_REPROMPT = "\U0001f914 \u05dc\u05d0 \u05d4\u05d1\u05e0\u05ea\u05d9 \u2014 \u05de\u05d4 \u05e9\u05de\u05da?"
 ONBOARDING_WELCOME = (
-    "\U0001f91d נעים מאוד, {name}!\n\n"
-    "כדי להתחיל, חבר את גוגל קלנדר שלך:\n"
+    "\U0001f91d \u05e0\u05e2\u05d9\u05dd \u05de\u05d0\u05d5\u05d3, {name}!\n\n"
+    "\u05db\u05d3\u05d9 \u05dc\u05d4\u05ea\u05d7\u05d9\u05dc, \u05d7\u05d1\u05e8 \u05d0\u05ea \u05d2\u05d5\u05d2\u05dc \u05e7\u05dc\u05e0\u05d3\u05e8 \u05e9\u05dc\u05da:\n"
     "{auth_url}\n\n"
-    "\u26a0\ufe0f גוגל עשוי להציג אזהרת אבטחה. "
-    "לחץ על 'מתקדם' \u2192 'המשך בכל זאת'."
+    "\u26a0\ufe0f \u05d2\u05d5\u05d2\u05dc \u05e2\u05e9\u05d5\u05d9 \u05dc\u05d4\u05e6\u05d9\u05d2 \u05d0\u05d6\u05d4\u05e8\u05ea \u05d0\u05d1\u05d8\u05d7\u05d4. "
+    "\u05dc\u05d7\u05e5 \u05e2\u05dc '\u05de\u05ea\u05e7\u05d3\u05dd' \u2192 '\u05d4\u05de\u05e9\u05da \u05d1\u05db\u05dc \u05d6\u05d0\u05ea'."
 )
 
-# ── Calendar queries ──────────────────────────────────────────────────────────
+NO_MEETINGS_TODAY = "\u2705 \u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d4\u05d9\u05d5\u05dd \u2014 \u05d9\u05d5\u05dd \u05e4\u05e0\u05d5\u05d9! \U0001f389"
+NO_MEETINGS_WEEK = "\U0001f389 \u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d4\u05e9\u05d1\u05d5\u05e2!"
+NEXT_MEETING_PREFIX = "\U0001f4cc \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4 \u05d4\u05d1\u05d0\u05d4 \u05e9\u05dc\u05da: {summary} \u05d1\u05e9\u05e2\u05d4 {time} ({until})"
+NEXT_MEETING_TOMORROW = "\U0001f4cc \u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d4\u05d9\u05d5\u05dd. \u05e8\u05d0\u05e9\u05d5\u05e0\u05d4 \u05de\u05d7\u05e8: {time} {summary}"
+NEXT_MEETING_FUTURE = "\U0001f4cc \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4 \u05d4\u05e7\u05e8\u05d5\u05d1\u05d4: {time} {summary} \u05d1{day}"
 
-NO_MEETINGS_TODAY = "\u2705 אין פגישות היום \u2014 יום פנוי! \U0001f389"
-NO_MEETINGS_WEEK = "\U0001f389 אין פגישות השבוע!"
-NEXT_MEETING_PREFIX = "\U0001f4cc הפגישה הבאה שלך: {summary} בשעה {time} ({until})"
-NEXT_MEETING_TOMORROW = "\U0001f4cc אין פגישות היום. ראשונה מחר: {time} {summary}"
-NEXT_MEETING_FUTURE = "\U0001f4cc הפגישה הקרובה: {time} {summary} ב{day}"
-
-FREE_SLOTS_HEADER = "\U0001f550 זמן פנוי היום:"
-FREE_TODAY_FULL = "\U0001f389 היום פנוי לגמרי!"
-FREE_TODAY_PACKED = "\U0001f4a5 יום עמוס \u2014 אין חלונות פנויים של 30 דקות ומעלה."
-
-# ── Connect / accounts ────────────────────────────────────────────────────────
+FREE_SLOTS_HEADER = "\u23f0 \u05d6\u05de\u05df \u05e4\u05e0\u05d5\u05d9:"
+FREE_TODAY_FULL = "\U0001f389 \u05d4\u05d9\u05d5\u05dd \u05e4\u05e0\u05d5\u05d9 \u05dc\u05d2\u05de\u05e8\u05d9!"
+FREE_TODAY_PACKED = "\U0001f4a5 \u05d9\u05d5\u05dd \u05e2\u05de\u05d5\u05e1 \u2014 \u05d0\u05d9\u05df \u05d7\u05dc\u05d5\u05e0\u05d5\u05ea \u05e4\u05e0\u05d5\u05d9\u05d5\u05ea \u05e9\u05dc 30 \u05d3\u05e7\u05d5\u05ea \u05d5\u05de\u05e2\u05dc\u05d4."
 
 CONNECT_CALENDAR_MSG = (
-    "חבר את גוגל קלנדר שלך כאן:\n{auth_url}\n\n"
-    "\u26a0\ufe0f גוגל עשוי להציג אזהרת אבטחה. "
-    "לחץ על 'מתקדם' \u2192 'המשך בכל זאת'.\n\n"
-    "להוספת חשבון שני, בקר באותו קישור אחרי חיבור הראשון."
+    "\u05d7\u05d1\u05e8 \u05d0\u05ea \u05d2\u05d5\u05d2\u05dc \u05e7\u05dc\u05e0\u05d3\u05e8 \u05e9\u05dc\u05da \u05db\u05d0\u05df:\n{auth_url}\n\n"
+    "\u26a0\ufe0f \u05d2\u05d5\u05d2\u05dc \u05e2\u05e9\u05d5\u05d9 \u05dc\u05d4\u05e6\u05d9\u05d2 \u05d0\u05d6\u05d4\u05e8\u05ea \u05d0\u05d1\u05d8\u05d7\u05d4. "
+    "\u05dc\u05d7\u05e5 \u05e2\u05dc '\u05de\u05ea\u05e7\u05d3\u05dd' \u2192 '\u05d4\u05de\u05e9\u05da \u05d1\u05db\u05dc \u05d6\u05d0\u05ea'.\n\n"
+    "\u05dc\u05d4\u05d5\u05e1\u05e4\u05ea \u05d7\u05e9\u05d1\u05d5\u05df \u05e9\u05e0\u05d9, \u05d1\u05e7\u05e8 \u05d1\u05d0\u05d5\u05ea\u05d5 \u05e7\u05d9\u05e9\u05d5\u05e8 \u05d0\u05d7\u05e8\u05d9 \u05d7\u05d9\u05d1\u05d5\u05e8 \u05d4\u05e8\u05d0\u05e9\u05d5\u05df."
 )
 
-CALENDAR_CONNECTED_WHATSAPP = "\u2705 גוגל קלנדר מחובר! שלח *0* לתפריט."
+CALENDAR_CONNECTED_WHATSAPP = "\u2705 \u05d2\u05d5\u05d2\u05dc \u05e7\u05dc\u05e0\u05d3\u05e8 \u05de\u05d7\u05d5\u05d1\u05e8! \u05e9\u05dc\u05d7 *0* \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8."
 
 NO_CALENDARS_CONNECTED = (
-    "\U0001f4f5 אין חשבונות גוגל מחוברים. "
-    "שלח \"חבר לוח שנה\" להוספת אחד."
+    "\U0001f4f5 \u05d0\u05d9\u05df \u05d7\u05e9\u05d1\u05d5\u05e0\u05d5\u05ea \u05d2\u05d5\u05d2\u05dc \u05de\u05d7\u05d5\u05d1\u05e8\u05d9\u05dd. "
+    "\u05e9\u05dc\u05d7 \"\u05d7\u05d1\u05e8 \u05d9\u05d5\u05de\u05df\" \u05dc\u05d4\u05d5\u05e1\u05e4\u05ea \u05d0\u05d7\u05d3."
 )
 
-# ── Settings ──────────────────────────────────────────────────────────────────
+DIGEST_OFF = "\U0001f515 \u05ea\u05e7\u05e6\u05d9\u05e8 \u05d4\u05d1\u05d5\u05e7\u05e8 \u05db\u05d5\u05d1\u05d4."
+DIGEST_ON = "\U0001f514 \u05ea\u05e7\u05e6\u05d9\u05e8 \u05d4\u05d1\u05d5\u05e7\u05e8 \u05d4\u05d5\u05e4\u05e2\u05dc."
+DIGEST_ALWAYS = "\u2705 \u05ea\u05e7\u05e6\u05d9\u05e8 \u05d4\u05d1\u05d5\u05e7\u05e8 \u05d9\u05d9\u05e9\u05dc\u05d7 \u05d2\u05dd \u05d1\u05d9\u05de\u05d9\u05dd \u05dc\u05dc\u05d0 \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea."
+DIGEST_TIME_SET = "\u23f0 \u05ea\u05e7\u05e6\u05d9\u05e8 \u05d4\u05d1\u05d5\u05e7\u05e8 \u05d4\u05d5\u05d2\u05d3\u05e8 \u05dc-{hour:02d}:{minute:02d}."
+TIMEZONE_SET = "\U0001f30d \u05d0\u05d6\u05d5\u05e8 \u05d4\u05d6\u05de\u05df \u05d4\u05d5\u05d2\u05d3\u05e8 \u05dc-{tz_name}."
 
-DIGEST_OFF = "\U0001f515 תקציר הבוקר כובה."
-DIGEST_ON = "\U0001f514 תקציר הבוקר הופעל."
-DIGEST_ALWAYS = "\u2705 תקציר הבוקר יישלח גם בימים ללא פגישות."
-DIGEST_TIME_SET = "\u23f0 תקציר הבוקר הוגדר ל-{hour:02d}:{minute:02d}."
-TIMEZONE_SET = "\U0001f30d אזור הזמן הוגדר ל-{tz_name}."
-
-# ── Errors ────────────────────────────────────────────────────────────────────
-
-CALENDAR_FETCH_ERROR = "\u26a0\ufe0f לא הצלחתי לגשת ללוח השנה. נסה שוב עוד רגע."
+CALENDAR_FETCH_ERROR = "\u26a0\ufe0f \u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05ea\u05d9 \u05dc\u05d2\u05e9\u05ea \u05dc\u05dc\u05d5\u05d7 \u05d4\u05e9\u05e0\u05d4. \u05e0\u05e1\u05d4 \u05e9\u05d5\u05d1 \u05e2\u05d5\u05d3 \u05e8\u05d2\u05e2."
 NO_CALENDAR_CONNECTED = (
-    "\U0001f4f2 חבר קודם את גוגל קלנדר שלך. "
-    "שלח \"חבר לוח שנה\" להתחלה."
+    "\U0001f4f2 \u05d7\u05d1\u05e8 \u05e7\u05d5\u05d3\u05dd \u05d0\u05ea \u05d2\u05d5\u05d2\u05dc \u05e7\u05dc\u05e0\u05d3\u05e8 \u05e9\u05dc\u05da. "
+    "\u05e9\u05dc\u05d7 \"\u05d7\u05d1\u05e8 \u05d9\u05d5\u05de\u05df\" \u05dc\u05d4\u05ea\u05d7\u05dc\u05d4."
 )
-
-# ── Blocking time ─────────────────────────────────────────────────────────────
 
 BLOCK_PARSE_ERROR = (
-    "לא הצלחתי לנתח את הפקודה.\n"
-    "נסה: \"חסום מחר 14:00-16:00\" או \"חסום שישי 10:00-12:00 עבודה עמוקה\""
+    "\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05ea\u05d9 \u05dc\u05e0\u05ea\u05d7 \u05d0\u05ea \u05d4\u05e4\u05e7\u05d5\u05d3\u05d4.\n"
+    "\u05e0\u05e1\u05d4: \"\u05d7\u05e1\u05d5\u05dd \u05de\u05d7\u05e8 14:00-16:00\" \u05d0\u05d5 \"\u05d7\u05e1\u05d5\u05dd \u05e9\u05d9\u05e9\u05d9 10:00-12:00 \u05e2\u05d1\u05d5\u05d3\u05d4 \u05e2\u05de\u05d5\u05e7\u05d4\""
 )
-BLOCK_DATE_RANGE_ERROR = "ניתן לחסום זמן רק בתוך 7 הימים הקרובים."
-BLOCK_END_BEFORE_START = "שעת הסיום חייבת להיות אחרי שעת ההתחלה."
+BLOCK_DATE_RANGE_ERROR = "\u05e0\u05d9\u05ea\u05df \u05dc\u05d7\u05e1\u05d5\u05dd \u05d6\u05de\u05df \u05e8\u05e7 \u05d1\u05ea\u05d5\u05da 7 \u05d4\u05d9\u05de\u05d9\u05dd \u05d4\u05e7\u05e8\u05d5\u05d1\u05d9\u05dd."
+BLOCK_END_BEFORE_START = "\u05e9\u05e2\u05ea \u05d4\u05e1\u05d9\u05d5\u05dd \u05d7\u05d9\u05d9\u05d1\u05ea \u05dc\u05d4\u05d9\u05d5\u05ea \u05d0\u05d7\u05e8\u05d9 \u05e9\u05e2\u05ea \u05d4\u05d4\u05ea\u05d7\u05dc\u05d4."
 BLOCK_CONFLICT = (
-    "\u26a0\ufe0f התנגשות: {conflict_names} חופפים עם {time_range} ב{date}.\n"
-    "השב YES ליצירת \"{title}\" בכל זאת."
+    "\u26a0\ufe0f \u05d4\u05ea\u05e0\u05d2\u05e9\u05d5\u05ea: {conflict_names} \u05d7\u05d5\u05e4\u05e4\u05d9\u05dd \u05e2\u05dd {time_range} \u05d1{date}.\n"
+    "\u05d4\u05e9\u05d1 YES \u05dc\u05d9\u05e6\u05d9\u05e8\u05ea \"{title}\" \u05d1\u05db\u05dc \u05d6\u05d0\u05ea."
 )
-BLOCK_CREATED = "\u2705 נחסם: \"{title}\" ב{date} {time_range}"
-BLOCK_CONFIRM_EXPIRED = "אישור פג תוקף. שלח שוב את פקודת החסימה."
-BLOCK_NO_PENDING = "אין חסימה ממתינה לאישור."
+BLOCK_CREATED = "\u2705 \u05e0\u05d7\u05e1\u05dd: \"{title}\" \u05d1{date} {time_range}"
+BLOCK_CONFIRM_EXPIRED = "\u05d0\u05d9\u05e9\u05d5\u05e8 \u05e4\u05d2 \u05ea\u05d5\u05e7\u05e3. \u05e9\u05dc\u05d7 \u05e9\u05d5\u05d1 \u05d0\u05ea \u05e4\u05e7\u05d5\u05d3\u05ea \u05d4\u05d7\u05e1\u05d9\u05de\u05d4."
+BLOCK_NO_PENDING = "\u05d0\u05d9\u05df \u05d7\u05e1\u05d9\u05de\u05d4 \u05de\u05de\u05ea\u05d9\u05e0\u05ea \u05dc\u05d0\u05d9\u05e9\u05d5\u05e8."
 
-# ── Birthdays ─────────────────────────────────────────────────────────────────
-
-BIRTHDAYS_HEADER = "\U0001f382 ימי הולדת השבוע:"
-NO_BIRTHDAYS = "\U0001f382 אין ימי הולדת ב-7 הימים הקרובים."
-BIRTHDAYS_FETCH_ERROR = "\u26a0\ufe0f לא הצלחתי לטעון ימי הולדת. נסה שוב עוד רגע."
+BIRTHDAYS_HEADER = "\U0001f382 \u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea \u05d4\u05e9\u05d1\u05d5\u05e2:"
+NO_BIRTHDAYS = "\U0001f382 \u05d0\u05d9\u05df \u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea \u05d1-7 \u05d4\u05d9\u05de\u05d9\u05dd \u05d4\u05e7\u05e8\u05d5\u05d1\u05d9\u05dd."
+BIRTHDAYS_FETCH_ERROR = "\u26a0\ufe0f \u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05ea\u05d9 \u05dc\u05d8\u05e2\u05d5\u05df \u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea. \u05e0\u05e1\u05d4 \u05e9\u05d5\u05d1 \u05e2\u05d5\u05d3 \u05e8\u05d2\u05e2."
+BIRTHDAYS_MONTH_HEADER = "\U0001f382 \u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea \u05d4\u05d7\u05d5\u05d3\u05e9:"
+NO_BIRTHDAYS_MONTH = "\U0001f382 \u05d0\u05d9\u05df \u05d9\u05de\u05d9 \u05d4\u05d5\u05dc\u05d3\u05ea \u05d4\u05d7\u05d5\u05d3\u05e9."
