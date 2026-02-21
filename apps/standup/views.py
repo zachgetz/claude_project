@@ -15,6 +15,18 @@ NEXT_MEETING_TRIGGERS = {'next meeting', 'next', "what's next", 'whats next'}
 FREE_TODAY_TRIGGERS = {'free today', 'am i free', 'free time', 'when am i free'}
 HELP_TRIGGERS = {'help', '?', '/help'}
 
+MENU_TRIGGERS = {'menu', 'options', 'calendar'}
+
+MENU_TEXT = (
+    "\U0001f4c5 Calendar menu:\n"
+    "1. Today's meetings\n"
+    "2. Tomorrow's meetings\n"
+    "3. This week\n"
+    "4. Next meeting\n"
+    "5. Free time today\n"
+    "6. Help"
+)
+
 WORKDAY_START_HOUR = 8
 WORKDAY_END_HOUR = 19
 MIN_FREE_SLOT_MINUTES = 30
@@ -73,6 +85,16 @@ class WhatsAppWebhookView(APIView):
         if body_lower in HELP_TRIGGERS:
             logger.info('Routing to help handler: phone=%s', from_number)
             return self._handle_help()
+
+        # Handle menu
+        if body_lower in MENU_TRIGGERS:
+            logger.info('Routing to menu handler: phone=%s', from_number)
+            return self._handle_menu()
+
+        # Handle digit shortcuts 1-6
+        if body.strip() in {'1', '2', '3', '4', '5', '6'}:
+            logger.info('Routing digit %s for phone=%s', body.strip(), from_number)
+            return self._handle_menu_digit(from_number, body.strip())
 
         # Handle connect calendar / add calendar
         if body_lower in ('connect calendar', 'add calendar'):
@@ -314,6 +336,33 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         response.message(HELP_TEXT)
         return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_menu(self):
+        response = MessagingResponse()
+        response.message(MENU_TEXT)
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_menu_digit(self, from_number, digit):
+        digit_map = {
+            '1': 'today',
+            '2': 'tomorrow',
+            '3': 'this week',
+            '4': 'next',
+            '5': 'free today',
+            '6': 'help',
+        }
+        body_lower = digit_map[digit]
+        if body_lower == 'help':
+            return self._handle_help()
+        if body_lower == 'next':
+            result = self._try_next_meeting(from_number)
+            return result if result is not None else self._handle_menu()
+        if body_lower == 'free today':
+            result = self._try_free_today(from_number)
+            return result if result is not None else self._handle_menu()
+        # day query ('today', 'tomorrow', 'this week')
+        result = self._try_day_query(from_number, body_lower)
+        return result if result is not None else self._handle_menu()
 
     def _maybe_onboarding(self, request, from_number):
         """
