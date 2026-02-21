@@ -263,7 +263,7 @@ class FreeTodayTests(TestCase):
         from django.http import HttpResponse
         from twilio.twiml.messaging_response import MessagingResponse
         twiml = MessagingResponse()
-        twiml.message('Free slots today:\n• 08:00–09:00 (1 hr)')
+        twiml.message('Free slots today:\n\u2022 08:00\u201309:00 (1 hr)')
         mock_free.return_value = HttpResponse(str(twiml), content_type='application/xml')
 
         response = self._post('am i free')
@@ -300,12 +300,18 @@ class HelpCommandTests(TestCase):
         content = response.content.decode()
         self.assertIn('today', content)
 
-    def test_unconnected_user_gets_onboarding(self):
-        """User with no CalendarToken and unrecognized message gets onboarding URL."""
+    def test_unconnected_user_gets_standup_recording(self):
+        """User with no CalendarToken and unrecognized message gets recorded as standup entry.
+
+        TZA-58 intentionally removed the catch-all _maybe_onboarding() call so that
+        unrecognized messages are always logged as standup entries. Onboarding is only
+        shown in response to explicit help/? commands. This test verifies that routing.
+        """
         response = self._post('hello world')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('calendar', content.lower())
+        # Unrecognized messages are recorded as standup entries
+        self.assertIn('Logged', content)
 
 
 @override_settings(**TWILIO_SETTINGS)

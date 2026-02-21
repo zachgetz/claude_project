@@ -24,9 +24,9 @@ def send_morning_checkin(self):
 
     Retries up to 3 times (60 s apart) on transient Twilio errors.
     """
-    phone_numbers = (
-        StandupEntry.objects.values_list('phone_number', flat=True)
-        .distinct()
+    # Use list(set(...)) for reliable Python-level deduplication of phone numbers.
+    phone_numbers = list(
+        set(StandupEntry.objects.values_list('phone_number', flat=True))
     )
 
     if not phone_numbers:
@@ -79,8 +79,7 @@ def send_evening_digest(self):
 
     # All phone numbers that have EVER submitted an entry
     all_numbers = list(
-        StandupEntry.objects.values_list('phone_number', flat=True)
-        .distinct()
+        set(StandupEntry.objects.values_list('phone_number', flat=True))
     )
 
     if not all_numbers:
