@@ -1,5 +1,6 @@
 """
 TZA-110: Tests for the fully menu-driven WhatsApp bot.
+TZA-126: Verified that schedule cancel/confirm tests pass after TZA-120 fix.
 
 Covers:
   - Root level: any text from connected user -> main menu
@@ -357,9 +358,9 @@ class MenuDrivenUITests(TestCase):
     def test_schedule_cancel_at_step_1_with_0(self):
         """'0' at any schedule step -> cancel, return MAIN_MENU_TEXT, state='main_menu'.
 
-        TZA-120 fix: state must be set to 'main_menu' (not deleted) so that the
-        very next inbound message is routed via _handle_main_menu_pick and the bot
-        remains fully responsive.
+        TZA-120 fix (verified by TZA-126): state must be set to 'main_menu' (not
+        deleted) so that the very next inbound message is routed via
+        _handle_main_menu_pick and the bot remains fully responsive.
         """
         UserMenuState.objects.create(
             phone_number=PHONE,
@@ -377,7 +378,7 @@ class MenuDrivenUITests(TestCase):
     def test_schedule_cancel_at_step_4_with_batel(self):
         """'batel' at step 4 -> cancel, return MAIN_MENU_TEXT, state='main_menu'.
 
-        TZA-120 fix: state must be 'main_menu', not deleted.
+        TZA-120 fix (verified by TZA-126): state must be 'main_menu', not deleted.
         """
         UserMenuState.objects.create(
             phone_number=PHONE,
@@ -395,8 +396,8 @@ class MenuDrivenUITests(TestCase):
     def test_schedule_happy_path_confirm(self):
         """Full schedule flow: 'asher' creates event, returns success, state='main_menu'.
 
-        TZA-120 fix: after a successful event creation the state is set to
-        'main_menu' (not deleted) so the bot stays responsive.
+        TZA-120 fix (verified by TZA-126): after a successful event creation the
+        state is set to 'main_menu' (not deleted) so the bot stays responsive.
         """
         UserMenuState.objects.create(
             phone_number=PHONE,
@@ -426,7 +427,7 @@ class MenuDrivenUITests(TestCase):
     def test_schedule_api_error_returns_error_message(self):
         """Schedule flow: API error -> Hebrew error message + main menu, state='main_menu'.
 
-        TZA-120 fix: state is 'main_menu', not deleted.
+        TZA-120 fix (verified by TZA-126): state is 'main_menu', not deleted.
         """
         UserMenuState.objects.create(
             phone_number=PHONE,
