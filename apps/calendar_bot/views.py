@@ -88,6 +88,14 @@ class CalendarAuthCallbackView(View):
         except Exception as exc:
             logger.warning('Could not register watch channel for %s: %s', phone, exc)
 
+        # Prime the snapshot table with the user's existing events so that
+        # the first watch notification does not fire false "New meeting added" alerts.
+        try:
+            from .calendar_service import sync_calendar_snapshot
+            sync_calendar_snapshot(phone, send_alerts=False)
+        except Exception as exc:
+            logger.warning('Could not prime calendar snapshot for %s: %s', phone, exc)
+
         # Clean up session
         request.session.pop('oauth_phone', None)
         request.session.pop('oauth_state', None)
