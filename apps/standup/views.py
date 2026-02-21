@@ -98,11 +98,8 @@ class WhatsAppWebhookView(APIView):
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
         # --- Fallthrough: unrecognized message ---
-        # Check if user has connected Google Calendar
-        onboarding = self._maybe_onboarding(request, from_number)
-        if onboarding is not None:
-            return onboarding
-
+        # Record as standup entry regardless of calendar connection status.
+        # Calendar onboarding is only shown when user sends help/? commands.
         current_week = datetime.datetime.now().isocalendar()[1]
 
         entry = StandupEntry.objects.create(
