@@ -142,7 +142,7 @@ class CalendarAuthCallbackView(View):
             client.messages.create(
                 from_=f'whatsapp:{django_settings.TWILIO_WHATSAPP_NUMBER}',
                 to=f'whatsapp:{phone}',
-                body='\u2705 Google Calendar connected! Send *0* for the menu.',
+                body='\u2705 גוגל קלנדר מחובר! שלח *0* לתפריט.',
             )
             logger.info('Sent WhatsApp confirmation after OAuth for phone=%s', phone)
         except Exception as exc:
