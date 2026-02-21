@@ -19,14 +19,14 @@ MENU_TRIGGERS = {'menu', 'options', 'calendar', '0'}
 
 MENU_TEXT = (
     "\U0001f4c5 Calendar menu:\n"
-    "1. Today's meetings\n"
-    "2. Tomorrow's meetings\n"
-    "3. This week\n"
-    "4. Next meeting\n"
-    "5. Free time today\n"
-    "6. Help\n"
-    "7. Set timezone\n"
-    "8. Birthdays next week\n"
+    "1. \U0001f4c5 Today's meetings\n"
+    "2. \U0001f4c5 Tomorrow's meetings\n"
+    "3. \U0001f5d3\ufe0f This week\n"
+    "4. \u23ed\ufe0f Next meeting\n"
+    "5. \U0001f550 Free time today\n"
+    "6. \u2753 Help\n"
+    "7. \U0001f30d Set timezone\n"
+    "8. \U0001f382 Birthdays next week\n"
     "\n"
     "Send 0 or 'menu' anytime to return here."
 )
@@ -55,7 +55,7 @@ MIN_FREE_SLOT_MINUTES = 30
 HELP_TEXT = (
     "\U0001f4c5 Your calendar assistant:\n"
     "\n"
-    "Queries:\n"
+    "\U0001f4cb Queries:\n"
     '\u2022 "today" / "meetings" \u2014 today\'s schedule\n'
     '\u2022 "tomorrow" \u2014 tomorrow\'s meetings\n'
     '\u2022 "friday" / "meetings thursday" \u2014 any day this week\n'
@@ -64,16 +64,16 @@ HELP_TEXT = (
     '\u2022 "next meeting" \u2014 your next upcoming event\n'
     '\u2022 "free today" \u2014 free slots today\n'
     "\n"
-    "Create:\n"
+    "\u270f\ufe0f Create:\n"
     '\u2022 "block tomorrow 2-4pm" \u2014 block time\n'
     '\u2022 "block friday 10am Deep work" \u2014 named block\n'
     "\n"
-    "Accounts:\n"
+    "\U0001f4f2 Accounts:\n"
     '\u2022 "connect calendar" \u2014 add another Google account\n'
     '\u2022 "my calendars" \u2014 list connected accounts\n'
     '\u2022 "remove calendar [email or label]" \u2014 remove an account\n'
     "\n"
-    "Settings:\n"
+    "\u2699\ufe0f Settings:\n"
     '\u2022 "set digest 7:30am" \u2014 change briefing time\n'
     '\u2022 "set digest off" \u2014 turn off morning digest\n'
     '\u2022 "set timezone Europe/London" \u2014 set your timezone\n'
@@ -82,7 +82,7 @@ HELP_TEXT = (
 )
 
 # Short hint shown when a connected user sends something unrecognised
-_UNRECOGNIZED_HINT = "Didn't understand that. Send *0* for the menu."
+_UNRECOGNIZED_HINT = "\U0001f914 Didn't understand that. Send *0* for the menu."
 
 
 class WhatsAppWebhookView(APIView):
@@ -225,7 +225,7 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         if not tokens:
             response.message(
-                'No Google Calendar accounts connected. '
+                '\U0001f4f5 No Google Calendar accounts connected. '
                 'Send "connect calendar" to add one.'
             )
         else:
@@ -295,7 +295,7 @@ class WhatsAppWebhookView(APIView):
             )
             response = MessagingResponse()
             response.message(
-                'Please connect your Google Calendar first. '
+                '\U0001f4f2 Please connect your Google Calendar first. '
                 'Send "connect calendar" to get started.'
             )
             return HttpResponse(str(response), content_type='application/xml')
@@ -402,7 +402,7 @@ class WhatsAppWebhookView(APIView):
                     f'/calendar/auth/start/?phone={from_number}'
                 )
             onboarding_text = (
-                "Hi! I'm your WhatsApp calendar assistant.\n"
+                "\U0001f44b Hi! I'm your WhatsApp calendar assistant \U0001f916\n"
                 "\n"
                 "To get started, connect your Google Calendar:\n"
                 f"{auth_url}\n"
@@ -474,12 +474,12 @@ class WhatsAppWebhookView(APIView):
 
                     if days_offset == 0:
                         msg = (
-                            f'Your next meeting: {ev["summary"]} at '
+                            f'\U0001f4cc Your next meeting: {ev["summary"]} at '
                             f'{ev["start_str"]} ({until_str})'
                         )
                     elif days_offset == 1:
                         msg = (
-                            f'No more meetings today. '
+                            f'\U0001f4cc No more meetings today. '
                             f'First tomorrow: {ev["start_str"]} {ev["summary"]}'
                         )
                     else:
@@ -496,7 +496,7 @@ class WhatsAppWebhookView(APIView):
                     return HttpResponse(str(response), content_type='application/xml')
 
         logger.info('No upcoming meetings found for phone=%s', from_number)
-        response.message('No more meetings this week.')
+        response.message('\U0001f389 No more meetings this week!')
         return HttpResponse(str(response), content_type='application/xml')
 
     def _try_free_today(self, from_number):
@@ -536,7 +536,7 @@ class WhatsAppWebhookView(APIView):
 
         if not timed_events:
             logger.info('No timed events for phone=%s date=%s -- fully free', from_number, today)
-            response.message("You're completely free today.")
+            response.message("\U0001f389 You're completely free today!")
             return HttpResponse(str(response), content_type='application/xml')
 
         busy = []
@@ -585,10 +585,10 @@ class WhatsAppWebhookView(APIView):
         )
 
         if not free_slots:
-            response.message('Pretty packed today \u2014 no free slots over 30 minutes.')
+            response.message('\U0001f4a5 Pretty packed today \u2014 no free slots over 30 minutes.')
             return HttpResponse(str(response), content_type='application/xml')
 
-        lines = ['Free slots today:']
+        lines = ['\U0001f550 Free slots today:']
         for slot_start, slot_end, slot_minutes in free_slots:
             hours = slot_minutes // 60
             mins = slot_minutes % 60
@@ -733,19 +733,19 @@ class WhatsAppWebhookView(APIView):
         if arg == 'off':
             CalendarToken.objects.filter(phone_number=from_number).update(digest_enabled=False)
             logger.info('Digest disabled for phone=%s', from_number)
-            response.message('Morning digest turned off.')
+            response.message('\U0001f515 Morning digest turned off.')
             return HttpResponse(str(response), content_type='application/xml')
 
         if arg == 'on':
             CalendarToken.objects.filter(phone_number=from_number).update(digest_enabled=True)
             logger.info('Digest enabled for phone=%s', from_number)
-            response.message('Morning digest turned on.')
+            response.message('\U0001f514 Morning digest turned on.')
             return HttpResponse(str(response), content_type='application/xml')
 
         if arg == 'always':
             CalendarToken.objects.filter(phone_number=from_number).update(digest_always=True)
             logger.info('Digest set to always-send for phone=%s', from_number)
-            response.message('Morning digest will be sent even on days with no meetings.')
+            response.message('\u2705 Morning digest will always be sent.')
             return HttpResponse(str(response), content_type='application/xml')
 
         parsed = _parse_digest_time(arg)
@@ -757,7 +757,7 @@ class WhatsAppWebhookView(APIView):
                 digest_enabled=True,
             )
             logger.info('Digest time set to %02d:%02d for phone=%s', hour, minute, from_number)
-            response.message(f'Morning digest scheduled for {hour:02d}:{minute:02d} in your timezone.')
+            response.message(f'\u23f0 Morning digest set for {hour:02d}:{minute:02d}.')
             return HttpResponse(str(response), content_type='application/xml')
 
         logger.warning(
@@ -800,7 +800,7 @@ class WhatsAppWebhookView(APIView):
 
         logger.info('Timezone set to %s for phone=%s', tz_name, from_number)
         response = MessagingResponse()
-        response.message(f"Timezone set to {tz_name}.")
+        response.message(f"\U0001f30d Timezone set to {tz_name}.")
         return HttpResponse(str(response), content_type='application/xml')
 
     def _handle_summary(self, from_number):
