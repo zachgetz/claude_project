@@ -11,3 +11,4 @@ psycopg2-binary==2.9.10
 google-api-python-client==2.151.0
 google-auth-oauthlib==1.2.1
 pytz==2024.2
+dj-database-url==2.3.0
