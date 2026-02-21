@@ -87,6 +87,13 @@ class WhatsAppWebhookView(APIView):
             logger.info('Routing to menu handler: phone=%s', from_number)
             return self._handle_menu()
 
+        # Handle single-digit menu selection (1-6 route to handlers; 7-9 fall through)
+        if re.match(r'^\d$', body_lower):
+            logger.info('Routing to menu digit handler: phone=%s digit=%s', from_number, body_lower)
+            digit_result = self._handle_menu_digit(from_number, body_lower)
+            if digit_result is not None:
+                return digit_result
+
         # Handle set timezone command
         if body_lower.startswith('set timezone '):
             logger.info('Routing to set_timezone handler: phone=%s', from_number)
@@ -238,6 +245,61 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
         response.message(MENU_TEXT)
         return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_menu_digit(self, from_number, digit):
+        """
+        Route single digit (1-6) to the appropriate calendar handler.
+        Returns an HttpResponse for digits 1-6.
+        Returns None for digits 7-9 so they fall through to standup logging.
+        """
+        if digit == '1':
+            # Today's events
+            logger.info('Menu digit 1 (today): phone=%s', from_number)
+            result = self._try_day_query(from_number, 'today')
+            if result is not None:
+                return result
+            # No calendar connected — fall through to standup
+            return None
+
+        if digit == '2':
+            # Tomorrow's events
+            logger.info('Menu digit 2 (tomorrow): phone=%s', from_number)
+            result = self._try_day_query(from_number, 'tomorrow')
+            if result is not None:
+                return result
+            return None
+
+        if digit == '3':
+            # This week's events
+            logger.info('Menu digit 3 (this week): phone=%s', from_number)
+            result = self._try_day_query(from_number, 'this week')
+            if result is not None:
+                return result
+            return None
+
+        if digit == '4':
+            # Next meeting
+            logger.info('Menu digit 4 (next meeting): phone=%s', from_number)
+            result = self._try_next_meeting(from_number)
+            if result is not None:
+                return result
+            return None
+
+        if digit == '5':
+            # Free slots today
+            logger.info('Menu digit 5 (free today): phone=%s', from_number)
+            result = self._try_free_today(from_number)
+            if result is not None:
+                return result
+            return None
+
+        if digit == '6':
+            # Help text
+            logger.info('Menu digit 6 (help): phone=%s', from_number)
+            return self._handle_help()
+
+        # Digits 7-9: fall through to standup
+        return None
 
     def _maybe_onboarding(self, request, from_number):
         """
