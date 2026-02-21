@@ -137,7 +137,7 @@ class SettingsMenuTests(TestCase):
         response = self._post('1')  # any digit
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Onboarding greeting contains '\u05d4\u05d9\u05d9' (היי)
+        # Onboarding greeting contains '\u05d4\u05d9\u05d9' (\u05d4\u05d9\u05d9)
         self.assertIn('\u05d4\u05d9\u05d9', content)
 
     def test_main_menu_digit_5_enters_settings(self):
@@ -147,7 +147,7 @@ class SettingsMenuTests(TestCase):
         response = self._post('5')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Settings menu header: '\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea' (הגדרות)
+        # Settings menu header: '\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea' (\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea)
         self.assertIn('\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea', content)
 
     def test_watch_channel_data_is_stored_in_model(self):
@@ -187,7 +187,7 @@ class SettingsMenuTests(TestCase):
         response = self._post('0')
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        # Main menu: '\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9' (תפריט ראשי)
+        # Main menu: '\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9' (\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9)
         self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8 \u05e8\u05d0\u05e9\u05d9', content)
 
 
