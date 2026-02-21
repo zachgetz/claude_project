@@ -3,6 +3,7 @@ import logging
 import re
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from django.conf import settings
 from django.http import HttpResponse
 from twilio.twiml.messaging_response import MessagingResponse
 from apps.standup.permissions import TwilioSignaturePermission
@@ -13,7 +14,6 @@ logger = logging.getLogger(__name__)
 NEXT_MEETING_TRIGGERS = {'next meeting', 'next', "what's next", 'whats next'}
 FREE_TODAY_TRIGGERS = {'free today', 'am i free', 'free time', 'when am i free'}
 HELP_TRIGGERS = {'help', '?', '/help'}
-MENU_TRIGGERS = {'menu', 'options', 'calendar'}
 
 WORKDAY_START_HOUR = 8
 WORKDAY_END_HOUR = 19
@@ -35,25 +35,17 @@ HELP_TEXT = (
     '\u2022 "block tomorrow 2-4pm" \u2014 block time\n'
     '\u2022 "block friday 10am Deep work" \u2014 named block\n'
     "\n"
+    "Accounts:\n"
+    '\u2022 "connect calendar" \u2014 add another Google account\n'
+    '\u2022 "my calendars" \u2014 list connected accounts\n'
+    '\u2022 "remove calendar [email or label]" \u2014 remove an account\n'
+    "\n"
     "Settings:\n"
     '\u2022 "set digest 7:30am" \u2014 change briefing time\n'
     '\u2022 "set digest off" \u2014 turn off morning digest\n'
     '\u2022 "set timezone Europe/London" \u2014 set your timezone\n'
     "\n"
     "I'll also alert you when meetings are rescheduled or cancelled."
-)
-
-MENU_TEXT = (
-    "\U0001f4cb Calendar Menu:\n"
-    "\n"
-    "1. Today's events\n"
-    "2. Tomorrow's events\n"
-    "3. This week's events\n"
-    "4. Next meeting\n"
-    "5. Free slots today\n"
-    "6. Help\n"
-    "\n"
-    "Reply with a number (1-6) to select an option."
 )
 
 
@@ -82,17 +74,20 @@ class WhatsAppWebhookView(APIView):
             logger.info('Routing to help handler: phone=%s', from_number)
             return self._handle_help()
 
-        # Handle menu command
-        if body_lower in MENU_TRIGGERS:
-            logger.info('Routing to menu handler: phone=%s', from_number)
-            return self._handle_menu()
+        # Handle connect calendar / add calendar
+        if body_lower in ('connect calendar', 'add calendar'):
+            logger.info('Routing to connect_calendar handler: phone=%s', from_number)
+            return self._handle_connect_calendar(request, from_number)
 
-        # Handle single-digit menu selection (1-6 route to handlers; 7-9 fall through)
-        if re.match(r'^\d$', body_lower):
-            logger.info('Routing to menu digit handler: phone=%s digit=%s', from_number, body_lower)
-            digit_result = self._handle_menu_digit(from_number, body_lower)
-            if digit_result is not None:
-                return digit_result
+        # Handle my calendars
+        if body_lower == 'my calendars':
+            logger.info('Routing to my_calendars handler: phone=%s', from_number)
+            return self._handle_my_calendars(from_number)
+
+        # Handle remove calendar [email or label]
+        if body_lower.startswith('remove calendar'):
+            logger.info('Routing to remove_calendar handler: phone=%s', from_number)
+            return self._handle_remove_calendar(from_number, body_lower)
 
         # Handle set timezone command
         if body_lower.startswith('set timezone '):
@@ -140,8 +135,6 @@ class WhatsAppWebhookView(APIView):
             return Response({'error': 'Body cannot be empty.'}, status=400)
 
         # --- Fallthrough: unrecognized message ---
-        # Record as standup entry regardless of calendar connection status.
-        # Calendar onboarding is only shown when user sends help/? commands.
         current_week = datetime.datetime.now().isocalendar()[1]
 
         logger.info(
@@ -189,6 +182,87 @@ class WhatsAppWebhookView(APIView):
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
+    # Multi-account calendar commands
+    # ------------------------------------------------------------------ #
+
+    def _handle_connect_calendar(self, request, from_number):
+        """Reply with the OAuth link for connecting another Google Calendar account."""
+        webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', '')
+        if webhook_base_url:
+            auth_url = webhook_base_url.rstrip('/') + f'/calendar/auth/start/?phone={from_number}'
+        else:
+            auth_url = request.build_absolute_uri(f'/calendar/auth/start/?phone={from_number}')
+
+        response = MessagingResponse()
+        response.message(
+            f'Connect your Google Calendar here:\n{auth_url}\n\n'
+            'To add a second account, visit the same link after connecting the first.'
+        )
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_my_calendars(self, from_number):
+        """List all connected CalendarToken rows for this phone."""
+        from apps.calendar_bot.models import CalendarToken
+
+        tokens = list(
+            CalendarToken.objects.filter(phone_number=from_number).order_by('created_at')
+        )
+
+        response = MessagingResponse()
+        if not tokens:
+            response.message(
+                'No Google Calendar accounts connected. '
+                'Send "connect calendar" to add one.'
+            )
+        else:
+            lines = [f'Connected calendars ({len(tokens)}):']
+            for i, token in enumerate(tokens, start=1):
+                email_display = token.account_email or '(unknown email)'
+                label_display = token.account_label or 'primary'
+                lines.append(f'{i}. {label_display}: {email_display}')
+            response.message('\n'.join(lines))
+        return HttpResponse(str(response), content_type='application/xml')
+
+    def _handle_remove_calendar(self, from_number, body_lower):
+        """Remove a connected calendar by email or label."""
+        from apps.calendar_bot.models import CalendarToken
+
+        # Extract the identifier after 'remove calendar'
+        arg = body_lower[len('remove calendar'):].strip()
+
+        if not arg:
+            response = MessagingResponse()
+            response.message(
+                'Please specify which calendar to remove.\n'
+                'Example: "remove calendar work" or "remove calendar user@gmail.com"'
+            )
+            return HttpResponse(str(response), content_type='application/xml')
+
+        # Try matching by email first, then by label
+        qs = CalendarToken.objects.filter(phone_number=from_number)
+        token = qs.filter(account_email__iexact=arg).first()
+        if token is None:
+            token = qs.filter(account_label__iexact=arg).first()
+
+        response = MessagingResponse()
+        if token is None:
+            response.message(
+                f'No connected calendar found matching "{arg}".\n'
+                'Send "my calendars" to see connected accounts.'
+            )
+        else:
+            email_display = token.account_email or token.account_label
+            token.delete()  # CASCADE removes associated watch channels and snapshots
+            logger.info(
+                'Calendar token removed: phone=%s email=%s label=%s',
+                from_number,
+                token.account_email,
+                token.account_label,
+            )
+            response.message(f'Removed calendar: {email_display}')
+        return HttpResponse(str(response), content_type='application/xml')
+
+    # ------------------------------------------------------------------ #
     # Block time command handling
     # ------------------------------------------------------------------ #
 
@@ -196,11 +270,11 @@ class WhatsAppWebhookView(APIView):
         from apps.calendar_bot.calendar_service import handle_block_command
         from apps.calendar_bot.models import CalendarToken
 
-        try:
-            token = CalendarToken.objects.get(phone_number=from_number)
-            if not token.access_token:
-                raise CalendarToken.DoesNotExist
-        except CalendarToken.DoesNotExist:
+        token = CalendarToken.objects.filter(
+            phone_number=from_number
+        ).order_by('created_at').first()
+
+        if token is None or not token.access_token:
             logger.warning(
                 'Block command requested but no calendar connected: phone=%s',
                 from_number,
@@ -208,7 +282,7 @@ class WhatsAppWebhookView(APIView):
             response = MessagingResponse()
             response.message(
                 'Please connect your Google Calendar first. '
-                'Ask for the calendar link to get started.'
+                'Send "connect calendar" to get started.'
             )
             return HttpResponse(str(response), content_type='application/xml')
 
@@ -233,7 +307,7 @@ class WhatsAppWebhookView(APIView):
         return HttpResponse(str(response), content_type='application/xml')
 
     # ------------------------------------------------------------------ #
-    # Help, menu, and onboarding
+    # Help and onboarding
     # ------------------------------------------------------------------ #
 
     def _handle_help(self):
@@ -241,84 +315,20 @@ class WhatsAppWebhookView(APIView):
         response.message(HELP_TEXT)
         return HttpResponse(str(response), content_type='application/xml')
 
-    def _handle_menu(self):
-        response = MessagingResponse()
-        response.message(MENU_TEXT)
-        return HttpResponse(str(response), content_type='application/xml')
-
-    def _handle_menu_digit(self, from_number, digit):
-        """
-        Route single digit (1-6) to the appropriate calendar handler.
-        Returns an HttpResponse for digits 1-6.
-        Returns None for digits 7-9 so they fall through to standup logging.
-        """
-        if digit == '1':
-            # Today's events
-            logger.info('Menu digit 1 (today): phone=%s', from_number)
-            result = self._try_day_query(from_number, 'today')
-            if result is not None:
-                return result
-            # No calendar connected — fall through to standup
-            return None
-
-        if digit == '2':
-            # Tomorrow's events
-            logger.info('Menu digit 2 (tomorrow): phone=%s', from_number)
-            result = self._try_day_query(from_number, 'tomorrow')
-            if result is not None:
-                return result
-            return None
-
-        if digit == '3':
-            # This week's events
-            logger.info('Menu digit 3 (this week): phone=%s', from_number)
-            result = self._try_day_query(from_number, 'this week')
-            if result is not None:
-                return result
-            return None
-
-        if digit == '4':
-            # Next meeting
-            logger.info('Menu digit 4 (next meeting): phone=%s', from_number)
-            result = self._try_next_meeting(from_number)
-            if result is not None:
-                return result
-            return None
-
-        if digit == '5':
-            # Free slots today
-            logger.info('Menu digit 5 (free today): phone=%s', from_number)
-            result = self._try_free_today(from_number)
-            if result is not None:
-                return result
-            return None
-
-        if digit == '6':
-            # Help text
-            logger.info('Menu digit 6 (help): phone=%s', from_number)
-            return self._handle_help()
-
-        # Digits 7-9: fall through to standup
-        return None
-
     def _maybe_onboarding(self, request, from_number):
         """
-        If the user has NO CalendarToken (or token with no access_token),
-        send the onboarding message with the OAuth URL.
-        For connected users, send the help message.
-        Returns None if no special handling needed (i.e. let standup logging proceed).
+        If the user has NO CalendarToken, send onboarding message.
+        For connected users, send help message.
         """
         from apps.calendar_bot.models import CalendarToken
 
-        try:
-            token = CalendarToken.objects.get(phone_number=from_number)
-            has_calendar = bool(token.access_token)
-        except CalendarToken.DoesNotExist:
-            has_calendar = False
+        token = CalendarToken.objects.filter(
+            phone_number=from_number
+        ).order_by('created_at').first()
+        has_calendar = bool(token and token.access_token)
 
         if not has_calendar:
             logger.info('Sending onboarding message to unconfigured user: phone=%s', from_number)
-            # Build the OAuth start URL
             auth_url = request.build_absolute_uri(
                 f'/calendar/auth/start/?phone={from_number}'
             )
@@ -349,11 +359,10 @@ class WhatsAppWebhookView(APIView):
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
         from apps.calendar_bot.models import CalendarToken
 
-        try:
-            token = CalendarToken.objects.get(phone_number=from_number)
-            if not token.access_token:
-                return None
-        except CalendarToken.DoesNotExist:
+        token = CalendarToken.objects.filter(
+            phone_number=from_number
+        ).order_by('created_at').first()
+        if token is None or not token.access_token:
             return None
 
         user_tz = get_user_tz(from_number)
@@ -376,7 +385,7 @@ class WhatsAppWebhookView(APIView):
                 events = []
 
             for ev in events:
-                if ev['start'] is None:  # all-day event — skip for next meeting
+                if ev['start'] is None:  # all-day event -- skip for next meeting
                     continue
                 event_dt = ev['start']
                 if event_dt > now_local:
@@ -424,11 +433,10 @@ class WhatsAppWebhookView(APIView):
         from apps.calendar_bot.calendar_service import get_user_tz, get_events_for_date
         from apps.calendar_bot.models import CalendarToken
 
-        try:
-            token = CalendarToken.objects.get(phone_number=from_number)
-            if not token.access_token:
-                return None
-        except CalendarToken.DoesNotExist:
+        token = CalendarToken.objects.filter(
+            phone_number=from_number
+        ).order_by('created_at').first()
+        if token is None or not token.access_token:
             return None
 
         user_tz = get_user_tz(from_number)
@@ -457,7 +465,7 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
 
         if not timed_events:
-            logger.info('No timed events for phone=%s date=%s — fully free', from_number, today)
+            logger.info('No timed events for phone=%s date=%s -- fully free', from_number, today)
             response.message("You're completely free today.")
             return HttpResponse(str(response), content_type='application/xml')
 
@@ -465,7 +473,6 @@ class WhatsAppWebhookView(APIView):
         busy = []
         for ev in timed_events:
             ev_start = ev['start']
-            # Use actual end time from event dict; fall back to +1h only if missing
             ev_end_raw = ev.get('end')
             if ev_end_raw:
                 try:
@@ -543,16 +550,13 @@ class WhatsAppWebhookView(APIView):
         from apps.calendar_bot.query_helpers import resolve_day, format_events_for_day, format_week_view
         from apps.calendar_bot.models import CalendarToken
 
-        try:
-            token = CalendarToken.objects.get(phone_number=from_number)
-            if not token.access_token:
-                return None
-        except CalendarToken.DoesNotExist:
+        token = CalendarToken.objects.filter(
+            phone_number=from_number
+        ).order_by('created_at').first()
+        if token is None or not token.access_token:
             return None
 
         user_tz = get_user_tz(from_number)
-        # Use user's local timezone for today so week boundaries are correct
-        # even near midnight (e.g. user is UTC-8 at 11pm Sun = Mon in UTC).
         today = datetime.datetime.now(tz=user_tz).date()
 
         target, label = resolve_day(body_lower, today)
@@ -571,7 +575,6 @@ class WhatsAppWebhookView(APIView):
         response = MessagingResponse()
 
         if target == 'week':
-            # week_start uses user-tz today so weeks are Mon-Sun in user's calendar
             week_start = today - datetime.timedelta(days=today.weekday())
             week_end = week_start + datetime.timedelta(days=6)
             week_events = {}
@@ -618,46 +621,46 @@ class WhatsAppWebhookView(APIView):
     def _handle_set_digest(self, from_number, body_lower):
         from apps.calendar_bot.models import CalendarToken
 
-        token, _ = CalendarToken.objects.get_or_create(
-            phone_number=from_number,
-            defaults={'access_token': '', 'refresh_token': ''},
-        )
+        # Ensure at least one token row exists for settings-only users
+        if not CalendarToken.objects.filter(phone_number=from_number).exists():
+            CalendarToken.objects.create(
+                phone_number=from_number,
+                account_email='',
+                access_token='',
+                refresh_token='',
+            )
 
         arg = body_lower[len('set digest'):].strip()
 
+        response = MessagingResponse()
+
         if arg == 'off':
-            token.digest_enabled = False
-            token.save(update_fields=['digest_enabled', 'updated_at'])
+            CalendarToken.objects.filter(phone_number=from_number).update(digest_enabled=False)
             logger.info('Digest disabled for phone=%s', from_number)
-            response = MessagingResponse()
             response.message('Morning digest turned off.')
             return HttpResponse(str(response), content_type='application/xml')
 
         if arg == 'on':
-            token.digest_enabled = True
-            token.save(update_fields=['digest_enabled', 'updated_at'])
+            CalendarToken.objects.filter(phone_number=from_number).update(digest_enabled=True)
             logger.info('Digest enabled for phone=%s', from_number)
-            response = MessagingResponse()
             response.message('Morning digest turned on.')
             return HttpResponse(str(response), content_type='application/xml')
 
         if arg == 'always':
-            token.digest_always = True
-            token.save(update_fields=['digest_always', 'updated_at'])
+            CalendarToken.objects.filter(phone_number=from_number).update(digest_always=True)
             logger.info('Digest set to always-send for phone=%s', from_number)
-            response = MessagingResponse()
             response.message('Morning digest will be sent even on days with no meetings.')
             return HttpResponse(str(response), content_type='application/xml')
 
         parsed = _parse_digest_time(arg)
         if parsed is not None:
             hour, minute = parsed
-            token.digest_hour = hour
-            token.digest_minute = minute
-            token.digest_enabled = True
-            token.save(update_fields=['digest_hour', 'digest_minute', 'digest_enabled', 'updated_at'])
+            CalendarToken.objects.filter(phone_number=from_number).update(
+                digest_hour=hour,
+                digest_minute=minute,
+                digest_enabled=True,
+            )
             logger.info('Digest time set to %02d:%02d for phone=%s', hour, minute, from_number)
-            response = MessagingResponse()
             response.message(f'Morning digest scheduled for {hour:02d}:{minute:02d} in your timezone.')
             return HttpResponse(str(response), content_type='application/xml')
 
@@ -666,7 +669,6 @@ class WhatsAppWebhookView(APIView):
             arg,
             from_number,
         )
-        response = MessagingResponse()
         response.message(
             'Could not understand digest setting. '
             'Try: "set digest 7:30am", "set digest off", "set digest on", "set digest always".'
@@ -690,12 +692,17 @@ class WhatsAppWebhookView(APIView):
             )
             return HttpResponse(str(response), content_type='application/xml')
 
-        token, _ = CalendarToken.objects.get_or_create(
-            phone_number=from_number,
-            defaults={'access_token': '', 'refresh_token': ''},
-        )
-        token.timezone = tz_name
-        token.save(update_fields=['timezone', 'updated_at'])
+        # Ensure at least one token row exists
+        if not CalendarToken.objects.filter(phone_number=from_number).exists():
+            CalendarToken.objects.create(
+                phone_number=from_number,
+                account_email='',
+                access_token='',
+                refresh_token='',
+            )
+
+        # Update ALL tokens for this phone to the same timezone
+        CalendarToken.objects.filter(phone_number=from_number).update(timezone=tz_name)
 
         logger.info('Timezone set to %s for phone=%s', tz_name, from_number)
         response = MessagingResponse()
