@@ -126,10 +126,7 @@ def _send_digest_for_phone(client, from_number, phone_number, primary_token):
         # Count timed events (those with an actual start time, not all-day)
         timed_count = sum(1 for ev in items if ev.get('start_str', 'All day') != 'All day')
 
-        # Opening greeting
-        greeting = f'☀️ בוקר טוב{name_part}! מקווה שהיום יהיה מדהים 🌟\n\n'
-
-        lines = [greeting + 'הפגישות שלך היום:']
+        lines = [f'☀️ בוקר טוב{name_part}! אלה הפגישות שלך להיום:']
         for ev in items:
             time_str = ev.get('start_str', 'All day')
             summary = ev.get('summary', '(No title)')
