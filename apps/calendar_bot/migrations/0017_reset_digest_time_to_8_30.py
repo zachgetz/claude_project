@@ -2,9 +2,9 @@ from django.db import migrations
 
 
 def reset_digest_time(apps, schema_editor):
-    """Reset all tokens to 8:30 AM digest time."""
+    """Set digest time to 20:23 (8:23 PM) for testing."""
     CalendarToken = apps.get_model('calendar_bot', 'CalendarToken')
-    CalendarToken.objects.all().update(digest_hour=8, digest_minute=30)
+    CalendarToken.objects.all().update(digest_hour=20, digest_minute=23)
 
 
 class Migration(migrations.Migration):
