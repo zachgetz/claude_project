@@ -167,15 +167,15 @@ def send_change_alerts(phone_number, changes):
             alerts_skipped += 1
             continue
 
-        # Determine relative day label
+        # Determine relative day label (Hebrew)
         if event_date == today:
-            day_label = 'today'
+            day_label = '\u05d4\u05d9\u05d5\u05dd'  # היום
         else:
-            day_label = 'tomorrow'
+            day_label = '\u05de\u05d7\u05e8'  # מחר
 
         time_str = event_local.strftime('%H:%M')
 
-        # Build message
+        # Build message (Hebrew)
         if change_type == 'rescheduled':
             old_start_utc = change.get('old_start')
             if old_start_utc is None:
@@ -191,18 +191,18 @@ def send_change_alerts(phone_number, changes):
             old_local = old_start_utc.astimezone(user_tz)
             old_time_str = old_local.strftime('%H:%M')
             message = (
-                f'\U0001f4c5 Meeting rescheduled:\n'
-                f'"{title}" moved from {old_time_str} to {time_str} {day_label}'
+                f'\U0001f4c5 \u05e4\u05d2\u05d9\u05e9\u05d4 \u05d4\u05d5\u05d6\u05d6\u05d4:\n'
+                f'"{title}" \u05e2\u05d1\u05e8\u05d4 \u05de-{old_time_str} \u05dc-{time_str} {day_label}'
             )
         elif change_type == 'cancelled':
             message = (
-                f'\u274c Meeting cancelled:\n'
-                f'"{title}" at {time_str} {day_label} was removed'
+                f'\u274c \u05e4\u05d2\u05d9\u05e9\u05d4 \u05d1\u05d5\u05d8\u05dc\u05d4:\n'
+                f'"{title}" \u05d1\u05e9\u05e2\u05d4 {time_str} {day_label} \u05d4\u05d5\u05e1\u05e8\u05d4 \u05de\u05d4\u05d9\u05d5\u05de\u05df'
             )
         elif change_type == 'new':
             message = (
-                f'\U0001f4ec New meeting added:\n'
-                f'"{title}" at {time_str} {day_label}'
+                f'\U0001f4e8 \u05e4\u05d2\u05d9\u05e9\u05d4 \u05d7\u05d3\u05e9\u05d4:\n'
+                f'"{title}" \u05d1\u05e9\u05e2\u05d4 {time_str} {day_label}'
             )
         else:
             logger.warning(

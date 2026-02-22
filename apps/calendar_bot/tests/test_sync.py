@@ -80,7 +80,8 @@ class SendChangeAlertsTests(TestCase):
 
         mock_client.messages.create.assert_called_once()
         body = mock_client.messages.create.call_args.kwargs['body']
-        self.assertIn('rescheduled', body.lower())
+        # Hebrew: פגישה הוזזה
+        self.assertIn('\u05d4\u05d5\u05d6\u05d6\u05d4', body)
         self.assertIn('Team Standup', body)
         self.assertIn('09:00', body)
         self.assertIn('11:00', body)
@@ -105,7 +106,8 @@ class SendChangeAlertsTests(TestCase):
 
         mock_client.messages.create.assert_called_once()
         body = mock_client.messages.create.call_args.kwargs['body']
-        self.assertIn('cancelled', body.lower())
+        # Hebrew: פגישה בוטלה
+        self.assertIn('\u05d1\u05d5\u05d8\u05dc\u05d4', body)
         self.assertIn('Design Review', body)
 
     @patch(PATCH_GET_USER_TZ)
@@ -129,7 +131,8 @@ class SendChangeAlertsTests(TestCase):
         mock_client.messages.create.assert_called_once()
         body = mock_client.messages.create.call_args.kwargs['body']
         self.assertIn('Emergency Sync', body)
-        self.assertIn('today', body)
+        # Hebrew: היום
+        self.assertIn('\u05d4\u05d9\u05d5\u05dd', body)
 
     @patch(PATCH_GET_USER_TZ)
     @patch(PATCH_TWILIO)
@@ -152,7 +155,8 @@ class SendChangeAlertsTests(TestCase):
         mock_client.messages.create.assert_called_once()
         body = mock_client.messages.create.call_args.kwargs['body']
         self.assertIn('Planning', body)
-        self.assertIn('tomorrow', body)
+        # Hebrew: מחר
+        self.assertIn('\u05de\u05d7\u05e8', body)
 
     @patch(PATCH_GET_USER_TZ)
     @patch(PATCH_TWILIO)
