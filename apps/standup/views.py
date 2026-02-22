@@ -154,6 +154,16 @@ def _format_date_he(d):
     return d.strftime('%d/%m/%Y')
 
 
+def _main_menu_text(phone_number):
+    """Return main menu text with optional personalized greeting."""
+    import apps.standup.strings_he as s
+    from apps.calendar_bot.models import CalendarToken
+    token = CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at').first()
+    name = token.name if (token and token.name) else ''
+    greeting = f'היי {name}! איזה כיף שאתה פה 🎉\n\n' if name else ''
+    return greeting + s.MAIN_MENU_TEXT
+
+
 def _settings_menu_text(phone_number):
     """Return settings menu text with dynamic name item."""
     import apps.standup.strings_he as s
@@ -256,7 +266,7 @@ class WhatsAppWebhookView(APIView):
 
         # Connected user at root -> show main menu, enter main_menu state
         _set_state(from_number, 'main_menu', 1, {})
-        return _xml(s.MAIN_MENU_TEXT)
+        return _xml(_main_menu_text(from_number))
 
     # ----------------------------------------------------------------------- #
     # Main menu pick (state='main_menu')
@@ -293,11 +303,11 @@ class WhatsAppWebhookView(APIView):
 
         if digit == '0':
             _set_state(from_number, 'main_menu', 1, {})
-            return _xml(s.MAIN_MENU_TEXT)
+            return _xml(_main_menu_text(from_number))
 
         # Invalid -> error + re-show main menu
         _set_state(from_number, 'main_menu', 1, {})
-        return _xml(s.INVALID_OPTION + '\n' + s.MAIN_MENU_TEXT)
+        return _xml(s.INVALID_OPTION + '\n' + _main_menu_text(from_number))
 
     # ----------------------------------------------------------------------- #
     # Numbered submenu state handler
@@ -312,7 +322,7 @@ class WhatsAppWebhookView(APIView):
         if action == 'meetings_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.MAIN_MENU_TEXT)
+                return _xml(_main_menu_text(from_number))
             if digit == '1':
                 _set_state(from_number, 'meetings_menu', 1, {})
                 msg = self._query_meetings_msg(from_number, 'today')
@@ -335,7 +345,7 @@ class WhatsAppWebhookView(APIView):
         if action == 'free_time_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.MAIN_MENU_TEXT)
+                return _xml(_main_menu_text(from_number))
             if digit in ('1', '2', '3'):
                 _set_state(from_number, 'free_time_menu', 1, {})
                 day_map = {'1': 'today', '2': 'tomorrow', '3': 'this week'}
@@ -347,7 +357,7 @@ class WhatsAppWebhookView(APIView):
         if action == 'birthdays_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.MAIN_MENU_TEXT)
+                return _xml(_main_menu_text(from_number))
             if digit == '1':
                 _set_state(from_number, 'birthdays_menu', 1, {})
                 msg = self._query_birthdays_msg(from_number, 'week')
@@ -362,7 +372,7 @@ class WhatsAppWebhookView(APIView):
         if action == 'settings_menu':
             if digit == '0':
                 _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.MAIN_MENU_TEXT)
+                return _xml(_main_menu_text(from_number))
             if digit == '1':
                 _set_state(from_number, 'timezone_menu', 1, {})
                 return _xml(s.TIMEZONE_MENU_TEXT)
@@ -395,7 +405,7 @@ class WhatsAppWebhookView(APIView):
         if action == 'digest_prompt':
             if digit in ('0', '\u05d1\u05d8\u05dc'):
                 _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.MAIN_MENU_TEXT)
+                return _xml(_main_menu_text(from_number))
             t = _parse_time_hhmm(body_stripped)
             if t is None:
                 return _xml(s.DIGEST_INVALID + '\n' + s.DIGEST_PROMPT)
@@ -426,7 +436,7 @@ class WhatsAppWebhookView(APIView):
         if action == 'disconnect_confirm':
             if digit in ('0', '2', '\u05dc\u05d0'):
                 _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.MAIN_MENU_TEXT)
+                return _xml(_main_menu_text(from_number))
             if digit == '1':
                 _clear_state(from_number)
                 return self._disconnect_calendar(from_number)
@@ -434,7 +444,7 @@ class WhatsAppWebhookView(APIView):
 
         # Fallback
         _set_state(from_number, 'main_menu', 1, {})
-        return _xml(s.MAIN_MENU_TEXT)
+        return _xml(_main_menu_text(from_number))
 
     # ----------------------------------------------------------------------- #
     # Schedule flow (multi-step)
@@ -449,7 +459,7 @@ class WhatsAppWebhookView(APIView):
         # message is routed via _handle_main_menu_pick and the bot stays responsive.
         if body_stripped in ('0', '\u05d1\u05d8\u05dc'):
             _set_state(from_number, 'main_menu', 1, {})
-            return _xml(s.SCHEDULE_CANCELLED + '\n' + s.MAIN_MENU_TEXT)
+            return _xml(s.SCHEDULE_CANCELLED + '\n' + _main_menu_text(from_number))
 
         user_tz = get_user_tz(from_number)
 
@@ -516,7 +526,7 @@ class WhatsAppWebhookView(APIView):
             if body_stripped == '\u05d1\u05d8\u05dc':
                 # Use _set_state so the bot remains responsive at main_menu level.
                 _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.SCHEDULE_CANCELLED + '\n' + s.MAIN_MENU_TEXT)
+                return _xml(s.SCHEDULE_CANCELLED + '\n' + _main_menu_text(from_number))
             if body_stripped == '\u05d0\u05e9\u05e8':
                 # Use _set_state so the bot remains responsive at main_menu level.
                 _set_state(from_number, 'main_menu', 1, {})
@@ -539,13 +549,13 @@ class WhatsAppWebhookView(APIView):
                     )
                     return _xml(msg)
                 else:
-                    return _xml(s.SCHEDULE_ERROR + '\n' + s.MAIN_MENU_TEXT)
+                    return _xml(s.SCHEDULE_ERROR + '\n' + _main_menu_text(from_number))
             # Any other input at confirmation step -> re-show summary
             return _xml(s.SCHEDULE_INVALID + '\n' + self._build_schedule_summary(data))
 
         # Unexpected step: reset to main_menu state so the bot stays responsive.
         _set_state(from_number, 'main_menu', 1, {})
-        return _xml(s.MAIN_MENU_TEXT)
+        return _xml(_main_menu_text(from_number))
 
     def _build_schedule_summary(self, data):
         target_date = datetime.date.fromisoformat(data['date'])
@@ -800,7 +810,7 @@ class WhatsAppWebhookView(APIView):
         logger.info('Calendar disconnected for phone=%s (deleted %d tokens)', from_number, deleted)
         msg = (
             '\u2705 \u05d4\u05d9\u05d5\u05de\u05df \u05e0\u05d5\u05ea\u05e7.\n\n'
-            + s.MAIN_MENU_TEXT
+            + _main_menu_text(from_number)
         )
         return _xml(msg)
 
