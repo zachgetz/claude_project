@@ -149,8 +149,12 @@ def get_events_for_date(phone_number, target_date, exclude_birthdays=False):
             start_raw = item.get('start', {})
             end_raw = item.get('end', {})
 
-            # Skip all-day events (birthdays, holidays, etc.) — they have 'date' not 'dateTime'
+            # Skip all-day events (holidays, etc.) — they have 'date' not 'dateTime'
             if 'dateTime' not in start_raw:
+                continue
+
+            # Skip birthday events (eventType='birthday' from Google's Birthdays calendar)
+            if item.get('eventType') == 'birthday':
                 continue
 
             start_dt = datetime.datetime.fromisoformat(start_raw['dateTime'])
