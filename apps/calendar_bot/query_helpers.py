@@ -110,8 +110,10 @@ def format_week_view(week_events, week_start, week_end):
     week_events: dict of date -> list of event dicts
     Separates each day block with a double newline.
     """
-    # Hebrew header with dd/mm date format
-    header = f'\u05d4\u05e9\u05d1\u05d5\u05e2 ({week_start.strftime("%d/%m")}\u2013{week_end.strftime("%d/%m"}):'
+    start_label = week_start.strftime('%d/%m')
+    end_label = week_end.strftime('%d/%m')
+    # Hebrew: השבוע (dd/mm–dd/mm):
+    header = f'\u05d4\u05e9\u05d1\u05d5\u05e2 ({start_label}\u2013{end_label}):'
     lines = [header]
 
     current = week_start
@@ -119,6 +121,7 @@ def format_week_view(week_events, week_start, week_end):
         day_name = current.strftime('%a')
         evs = week_events.get(current, [])
         if not evs:
+            # Hebrew: פנוי
             lines.append(f'{day_name}: \u05e4\u05e0\u05d5\u05d9')
         else:
             parts = []
