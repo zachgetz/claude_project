@@ -16,7 +16,7 @@ def remove_morning_checkin_task(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('standup', '0002_alter_standupentry_options'),
+        ('standup', '0005_standupentry_phone_max_length'),
     ]
 
     operations = [
