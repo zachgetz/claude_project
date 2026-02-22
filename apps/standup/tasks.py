@@ -7,64 +7,6 @@ from apps.standup.models import StandupEntry
 
 logger = logging.getLogger(__name__)
 
-MORNING_CHECKIN_MESSAGE = (
-    "Good morning! \u2600\ufe0f Time for your daily standup.\n\n"
-    "Please reply with your update:\n"
-    "- What did you work on yesterday?\n"
-    "- What are you working on today?\n"
-    "- Any blockers?"
-)
-
-
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def send_morning_checkin(self):
-    """
-    Celery task: send a morning check-in WhatsApp prompt to every unique
-    phone number that has ever submitted a standup entry.
-
-    Retries up to 3 times (60 s apart) on transient Twilio errors.
-    """
-    # Use list(set(...)) for reliable Python-level deduplication of phone numbers.
-    phone_numbers = list(
-        set(StandupEntry.objects.values_list('phone_number', flat=True))
-    )
-
-    if not phone_numbers:
-        logger.info('send_morning_checkin: no phone numbers found, skipping.')
-        return
-
-    client = Client(
-        settings.TWILIO_ACCOUNT_SID,
-        settings.TWILIO_AUTH_TOKEN,
-    )
-    from_number = settings.TWILIO_WHATSAPP_NUMBER
-    status_callback_url = f"{settings.WEBHOOK_BASE_URL}/standup/twilio-status/"
-
-    success_count = 0
-    error_count = 0
-
-    for number in phone_numbers:
-        try:
-            client.messages.create(
-                from_=from_number,
-                to=number,
-                body=MORNING_CHECKIN_MESSAGE,
-                status_callback=status_callback_url,
-            )
-            logger.info('Morning check-in sent to %s', number)
-            success_count += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                'Failed to send morning check-in to %s: %s', number, exc
-            )
-            error_count += 1
-
-    logger.info(
-        'send_morning_checkin complete: %d sent, %d failed.',
-        success_count,
-        error_count,
-    )
-
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def send_evening_digest(self):
