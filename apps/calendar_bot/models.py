@@ -15,7 +15,7 @@ class CalendarToken(models.Model):
     timezone = models.CharField(max_length=64, default='UTC')
     digest_enabled = models.BooleanField(default=True)
     digest_hour = models.IntegerField(default=8)
-    digest_minute = models.IntegerField(default=0)
+    digest_minute = models.IntegerField(default=30)
     digest_always = models.BooleanField(default=False)
     # Menu state machine fields
     pending_action = models.CharField(max_length=50, null=True, blank=True)

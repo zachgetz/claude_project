@@ -76,8 +76,9 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
-# Morning digest default hour (UTC)
+# Morning digest default time (UTC)
 MORNING_DIGEST_HOUR = config('MORNING_DIGEST_HOUR', default=8, cast=int)
+MORNING_DIGEST_MINUTE = config('MORNING_DIGEST_MINUTE', default=30, cast=int)
 
 # Celery beat schedule
 CELERY_BEAT_SCHEDULE = {
