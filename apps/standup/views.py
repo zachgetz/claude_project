@@ -154,6 +154,23 @@ def _format_date_he(d):
     return d.strftime('%d/%m/%Y')
 
 
+def _settings_menu_text(phone_number):
+    """Return settings menu text with dynamic name item."""
+    import apps.standup.strings_he as s
+    from apps.calendar_bot.models import CalendarToken
+    token = CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at').first()
+    name_item = s.NAME_MENU_ITEM_CHANGE if (token and token.name) else s.NAME_MENU_ITEM_NEW
+    return (
+        "⚙️ הגדרות:\n"
+        "1. 🌍 אזור זמן\n"
+        "2. ⏰ שעת התראה יומית\n"
+        "3. 🔗 חבר יומן נוסף\n"
+        "4. ❌ נתק יומן\n"
+        f"{name_item}\n"
+        "0. חזרה לתפריט"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Main webhook view
 # --------------------------------------------------------------------------- #
@@ -187,7 +204,7 @@ class WhatsAppWebhookView(APIView):
         # ------------------------------------------------------------------- #
         if action in ('meetings_menu', 'free_time_menu', 'birthdays_menu',
                       'settings_menu', 'timezone_menu', 'disconnect_confirm',
-                      'digest_prompt'):
+                      'digest_prompt', 'name_prompt'):
             return self._handle_menu_state(
                 request, from_number, body_stripped, action, step, data
             )
@@ -268,7 +285,7 @@ class WhatsAppWebhookView(APIView):
 
         if digit == '5':
             _set_state(from_number, 'settings_menu', 1, {})
-            return _xml(s.SETTINGS_MENU_TEXT)
+            return _xml(_settings_menu_text(from_number))
 
         if digit == '6':
             _set_state(from_number, 'main_menu', 1, {})
@@ -358,13 +375,16 @@ class WhatsAppWebhookView(APIView):
             if digit == '4':
                 _set_state(from_number, 'disconnect_confirm', 1, {})
                 return _xml(s.DISCONNECT_CONFIRM_TEXT)
-            return _xml(s.INVALID_OPTION + '\n' + s.SETTINGS_MENU_TEXT)
+            if digit == '5':
+                _set_state(from_number, 'name_prompt', 1, {})
+                return _xml(s.NAME_PROMPT)
+            return _xml(s.INVALID_OPTION + '\n' + _settings_menu_text(from_number))
 
         # ---- Timezone submenu -------------------------------------------- #
         if action == 'timezone_menu':
             if digit == '0':
                 _set_state(from_number, 'settings_menu', 1, {})
-                return _xml(s.SETTINGS_MENU_TEXT)
+                return _xml(_settings_menu_text(from_number))
             if digit in ('1', '2', '3', '4', '5', '6'):
                 tz_name = TZ_MAP[int(digit) - 1]
                 _clear_state(from_number)
@@ -387,6 +407,20 @@ class WhatsAppWebhookView(APIView):
             _clear_state(from_number)
             logger.info('Digest time set to %02d:%02d for phone=%s', h, m, from_number)
             return _xml(s.DIGEST_TIME_SET.format(hour=h, minute=m))
+
+        # ---- Name prompt (free-text step) -------------------------------- #
+        if action == 'name_prompt':
+            if digit == '0':
+                _set_state(from_number, 'settings_menu', 1, {})
+                return _xml(_settings_menu_text(from_number))
+            name = body_stripped.strip()
+            if not name:
+                return _xml(s.NAME_PROMPT)
+            from apps.calendar_bot.models import CalendarToken
+            CalendarToken.objects.filter(phone_number=from_number).update(name=name)
+            _clear_state(from_number)
+            logger.info('Name set to %r for phone=%s', name, from_number)
+            return _xml(s.NAME_SET.format(name=name))
 
         # ---- Disconnect confirm ------------------------------------------ #
         if action == 'disconnect_confirm':
