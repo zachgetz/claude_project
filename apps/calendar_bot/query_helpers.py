@@ -91,34 +91,35 @@ def _date_label(d):
 def format_events_for_day(events, date_label):
     """
     Format a list of event dicts (from get_events_for_date) into a WhatsApp message.
+    Returns a Hebrew-language message with double newlines between events.
     """
     if not events:
-        return f'Nothing scheduled for {date_label}. Free day.'
+        return f'\u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d1-{date_label}. \u05d9\u05d5\u05dd \u05e4\u05e0\u05d5\u05d9 \U0001f389'
 
-    lines = [f'Your meetings on {date_label}:']
-    for ev in events:
-        lines.append(f'\u2022 {ev["start_str"]} \u2014 {ev["summary"]}')
+    header = f'\u05d4\u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05e9\u05dc\u05da \u05d1-{date_label}:'
+    event_lines = [f'\u2022 {ev["start_str"]} \u2014 {ev["summary"]}' for ev in events]
     count = len(events)
-    noun = 'meeting' if count == 1 else 'meetings'
-    lines.append(f'{count} {noun}')
-    return '\n'.join(lines)
+    noun = '\u05e4\u05d2\u05d9\u05e9\u05d4' if count == 1 else '\u05e4\u05d2\u05d9\u05e9\u05d5\u05ea'
+    footer = f'{count} {noun}'
+    return header + '\n\n' + '\n\n'.join(event_lines) + '\n\n' + footer
 
 
 def format_week_view(week_events, week_start, week_end):
     """
-    Format a condensed week view. Weeks run Mon-Sun.
+    Format a condensed week view in Hebrew. Weeks run Mon-Sun.
     week_events: dict of date -> list of event dicts
+    Separates each day block with a double newline.
     """
-    start_label = week_start.strftime('%b %-d')
-    end_label = week_end.strftime('%b %-d')
-    lines = [f'This week (Mon {start_label} \u2013 Sun {end_label}):']
+    # Hebrew header with dd/mm date format
+    header = f'\u05d4\u05e9\u05d1\u05d5\u05e2 ({week_start.strftime("%d/%m")}\u2013{week_end.strftime("%d/%m"}):'
+    lines = [header]
 
     current = week_start
     while current <= week_end:
         day_name = current.strftime('%a')
         evs = week_events.get(current, [])
         if not evs:
-            lines.append(f'{day_name}: Free')
+            lines.append(f'{day_name}: \u05e4\u05e0\u05d5\u05d9')
         else:
             parts = []
             for ev in evs:
@@ -126,4 +127,4 @@ def format_week_view(week_events, week_start, week_end):
             lines.append(f'{day_name}: {chr(44).join(parts)}')
         current += datetime.timedelta(days=1)
 
-    return '\n'.join(lines)
+    return '\n\n'.join(lines)

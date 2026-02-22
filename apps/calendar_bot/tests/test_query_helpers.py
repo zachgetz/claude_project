@@ -147,16 +147,19 @@ class FormatEventsForDayTests(TestCase):
 
     def test_empty_events_returns_free_day_message(self):
         result = format_events_for_day([], 'Wednesday, Feb 18')
-        self.assertIn('Nothing scheduled', result)
+        # Hebrew: אין פגישות ב-
+        self.assertIn('\u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d1-', result)
         self.assertIn('Wednesday, Feb 18', result)
-        self.assertIn('Free day', result)
+        # Hebrew: יום פנוי
+        self.assertIn('\u05d9\u05d5\u05dd \u05e4\u05e0\u05d5\u05d9', result)
 
     def test_single_event_formatted(self):
         events = [{'start_str': '09:00', 'summary': 'Team Standup'}]
         result = format_events_for_day(events, 'Wednesday, Feb 18')
         self.assertIn('09:00', result)
         self.assertIn('Team Standup', result)
-        self.assertIn('1 meeting', result)
+        # Hebrew: 1 פגישה
+        self.assertIn('1 \u05e4\u05d2\u05d9\u05e9\u05d4', result)
 
     def test_multiple_events_formatted(self):
         events = [
@@ -166,7 +169,10 @@ class FormatEventsForDayTests(TestCase):
         result = format_events_for_day(events, 'Wednesday, Feb 18')
         self.assertIn('Standup', result)
         self.assertIn('Design Review', result)
-        self.assertIn('2 meetings', result)
+        # Hebrew: 2 פגישות
+        self.assertIn('2 \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea', result)
+        # Events separated by double newline
+        self.assertIn('\n\n', result)
 
     def test_header_contains_date_label(self):
         events = [{'start_str': '10:00', 'summary': 'Sprint Planning'}]
@@ -186,14 +192,16 @@ class FormatWeekViewTests(TestCase):
         week_start = datetime.date(2026, 2, 16)  # Monday
         week_end = datetime.date(2026, 2, 22)    # Sunday
         result = format_week_view({}, week_start, week_end)
-        self.assertIn('Feb 16', result)
-        self.assertIn('Feb 22', result)
+        # New format: dd/mm e.g. '16/02' and '22/02'
+        self.assertIn('16/02', result)
+        self.assertIn('22/02', result)
 
     def test_free_day_shown_for_empty_events(self):
         week_start = datetime.date(2026, 2, 16)
         week_end = datetime.date(2026, 2, 22)
         result = format_week_view({}, week_start, week_end)
-        self.assertIn('Free', result)
+        # Hebrew: פנוי
+        self.assertIn('\u05e4\u05e0\u05d5\u05d9', result)
 
     def test_events_shown_per_day(self):
         week_start = datetime.date(2026, 2, 16)
