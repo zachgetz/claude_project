@@ -115,6 +115,26 @@ class CalendarAuthCallbackView(View):
             },
         )
 
+        # Fetch timezone from Google Calendar primary calendar (only if not already set by user)
+        if token_obj.timezone == 'UTC':
+            try:
+                from .calendar_service import get_calendar_service
+                cal_service = get_calendar_service(token_obj)
+                primary_cal = cal_service.calendars().get(calendarId='primary').execute()
+                google_tz = primary_cal.get('timeZone', '')
+                if google_tz:
+                    token_obj.timezone = google_tz
+                    token_obj.save(update_fields=['timezone'])
+                    logger.info(
+                        'calendar_auth_callback: set timezone=%s for phone=%s from Google Calendar',
+                        google_tz, phone,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    'calendar_auth_callback: could not fetch timezone from Google for phone=%s: %s',
+                    phone, exc,
+                )
+
         # Register Google Calendar push notification watch channel
         logger.info(
             'calendar_auth_callback: calling register_watch_channel for phone=%s email=%s',
