@@ -55,14 +55,14 @@ class CalendarTokenTests(TestCase):
         )
         self.assertEqual(token.digest_hour, 8)
 
-    def test_default_digest_minute_is_0(self):
+    def test_default_digest_minute_is_30(self):
         token = CalendarToken.objects.create(
             phone_number='+1000000004',
             account_email='d@example.com',
             access_token='a',
             refresh_token='b',
         )
-        self.assertEqual(token.digest_minute, 0)
+        self.assertEqual(token.digest_minute, 30)
 
     def test_default_digest_always_is_false(self):
         token = CalendarToken.objects.create(
