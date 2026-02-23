@@ -160,7 +160,10 @@ def _main_menu_text(phone_number):
     from apps.calendar_bot.models import CalendarToken
     token = CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at').first()
     name = token.name if (token and token.name) else ''
-    greeting = f'היי {name}! איזה כיף שאתה פה 🎉\n\n' if name else ''
+    if name:
+        greeting = f'\u05d4\u05d9\u05d9 {name}! \u05d0\u05d9\u05d6\u05d4 \u05db\u05d9\u05e3 \u05e9\u05d0\u05ea\u05d4 \u05e4\u05d4 \U0001f389\n\n'
+    else:
+        greeting = '\u05e9\u05dc\u05d5\u05dd! \U0001f60a\n\n'
     return greeting + s.MAIN_MENU_TEXT
 
 
@@ -171,13 +174,13 @@ def _settings_menu_text(phone_number):
     token = CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at').first()
     name_item = s.NAME_MENU_ITEM_CHANGE if (token and token.name) else s.NAME_MENU_ITEM_NEW
     return (
-        "⚙️ הגדרות:\n"
-        "1. 🌍 אזור זמן\n"
-        "2. ⏰ שעת התראה יומית\n"
-        "3. 🔗 חבר יומן נוסף\n"
-        "4. ❌ נתק יומן\n"
+        "\u2699\ufe0f \u05d4\u05d2\u05d3\u05e8\u05d5\u05ea:\n"
+        "1. \U0001f30d \u05d0\u05d6\u05d5\u05e8 \u05d6\u05de\u05df\n"
+        "2. \u23f0 \u05e9\u05e2\u05ea \u05d4\u05ea\u05e8\u05d0\u05d4 \u05d9\u05d5\u05de\u05d9\u05ea\n"
+        "3. \U0001f517 \u05d7\u05d1\u05e8 \u05d9\u05d5\u05de\u05df \u05e0\u05d5\u05e1\u05e3\n"
+        "4. \u274c \u05e0\u05ea\u05e7 \u05d9\u05d5\u05de\u05df\n"
         f"{name_item}\n"
-        "0. חזרה לתפריט"
+        "0. \u05d7\u05d6\u05e8\u05d4 \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8"
     )
 
 
