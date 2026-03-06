@@ -144,3 +144,15 @@ Remaining gaps:
 - Railway CLI: `/Users/tzachgetz/.nvm/versions/node/v18.20.8/bin/railway`
 - Python: `/Users/tzachgetz/.pyenv/versions/3.11.1/bin/python`
 - Run tests: `python manage.py test apps.standup.tests` from `claude_project`
+
+## Project Consolidation (2026-03-06)
+- TzachClaude deleted — everything moved to claude_project
+- All agents: `.claude/agents/` (programmer, pm-agent, qa-agent, health-bug-fixer, etc.)
+- All skills: `.claude/skills/` (after-merge, assign-to-project, next-phase, review-pr)
+- MCP servers: `mcp_servers/` (mcp_railway.py, railway_status.py)
+- Agent scripts: `agents/` (notify_phase_complete.py, ask_user_email.py, pipeline.py, etc.)
+- settings.json merged — includes mcp__linear__*, mcp__github__*, Bash permissions + all hooks
+- Linear API key replaced with ${LINEAR_API_KEY} placeholder throughout
+- .gitignore added — ignores __pycache__, .env, db.sqlite3, .DS_Store, .idea/, venv/
+- All pushed to GitHub on branch feat/main-menu-greeting
+- .env in git history was all fake/test values — no rotation needed
