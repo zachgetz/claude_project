@@ -4,10 +4,12 @@ description: Mark a Linear ticket as Done after its PR has been merged. Usage: /
 user-invocable: true
 ---
 
-Mark a Linear ticket as Done after the user has merged its PR.
+Mark one or more Linear tickets as Done after their PRs have been merged.
 
-## Usage
-The user will invoke this as: `/after-merge TZA-5` (or provide the ticket ID in the message)
+## Input
+The user invoked this with: $ARGUMENTS
+Parse all ticket IDs from this input (e.g. `TZA-5`, `TZA-5 TZA-6 TZA-7`).
+If no ticket IDs are found, ask: "Which ticket was merged? (e.g. TZA-5)"
 
 ## Team & Project Info
 - Team ID: `b2ef251a-01af-4aa8-bc3a-759fce5b5a2b`
@@ -15,9 +17,9 @@ The user will invoke this as: `/after-merge TZA-5` (or provide the ticket ID in 
 
 ## Process
 
-### Step 1 — Identify the ticket
-Extract the ticket identifier from the user's message (e.g. `TZA-5`).
-If no identifier is provided, ask: "Which ticket was merged? (e.g. TZA-5)"
+### Step 1 — Identify the tickets
+Extract all ticket identifiers from $ARGUMENTS (e.g. `TZA-5`, `TZA-6`).
+Process each one through steps 2–3 before moving to step 4.
 
 ### Step 2 — Fetch ticket details
 Use `linear_search_issues` to find the ticket and confirm:
@@ -54,4 +56,4 @@ After marking Done, check if all tickets in the same phase are now Done:
 
 ## Notes
 - Phase is determined by reading the ticket title or description for patterns like "Phase 1", "[Phase 2]", "Phase: 3"
-- Multiple tickets can be passed: `/after-merge TZA-5 TZA-6 TZA-7` — process each one
+- Multiple tickets can be passed: `/after-merge TZA-5 TZA-6 TZA-7` — $ARGUMENTS will be `TZA-5 TZA-6 TZA-7`, parse and process each one

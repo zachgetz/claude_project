@@ -156,3 +156,15 @@ Remaining gaps:
 - .gitignore added — ignores __pycache__, .env, db.sqlite3, .DS_Store, .idea/, venv/
 - All pushed to GitHub on branch feat/main-menu-greeting
 - .env in git history was all fake/test values — no rotation needed
+
+## Skills & $ARGUMENTS (2026-03-06)
+- Skill files live at `.claude/skills/<command-name>/SKILL.md`
+- Directory name = command name (e.g. `after-merge/` → `/after-merge`)
+- `user-invocable: true` in frontmatter makes it a slash command
+- `$ARGUMENTS` = everything typed after the command name, as one string
+- Claude parses multiple args from $ARGUMENTS based on instructions in the skill
+- Updated `after-merge/SKILL.md` to use $ARGUMENTS explicitly
+
+## Tomorrow
+- Build a new skill with $ARGUMENTS from scratch
+- SDK section (programmatic Claude Code calls vs subprocess)
