@@ -1,4 +1,5 @@
 # How We Built This: AI Agents in Claude Code
+<!-- test edit - hook triggered: 2026-03-04 (updated x3) -->
 
 This file explains how we used Claude Code to build a real product — a WhatsApp calendar bot — using a team of specialized AI agents working together.
 
@@ -125,3 +126,4 @@ State transitions happen via GraphQL curl commands (not the MCP tool — it hang
 5. **UX is a first-class role.** Having a dedicated UX agent prevented generic, cold bot text.
 6. **RTL is a display issue, not a code issue.** Hebrew looks "backward" in terminals — that's the tool, not the code. WhatsApp renders it correctly.
 7. **Background agents + Linear polling = async pipelines.** You can chain agents without blocking your conversation.
+8. **Hooks enable automation.** Claude Code hooks let you run shell commands in response to tool calls, enabling custom workflows.

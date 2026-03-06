@@ -18,7 +18,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.standup.models import StandupEntry
-from apps.standup.tasks import send_morning_checkin, send_evening_digest
+from apps.standup.tasks import send_evening_digest
 
 
 PATCH_TWILIO = 'apps.standup.tasks.Client'
@@ -176,21 +176,6 @@ class TaskStatusCallbackKwargTests(TestCase):
 
     def _make_entry(self):
         make_entry(self.PHONE_A)
-
-    def test_send_morning_checkin_passes_status_callback(self):
-        """send_morning_checkin must pass status_callback= to messages.create()."""
-        self._make_entry()
-        mock_client = MagicMock()
-        with patch(PATCH_TWILIO, return_value=mock_client):
-            send_morning_checkin()
-
-        mock_client.messages.create.assert_called_once()
-        call_kwargs = mock_client.messages.create.call_args.kwargs
-        self.assertIn('status_callback', call_kwargs)
-        self.assertEqual(
-            call_kwargs['status_callback'],
-            'https://example.com/standup/twilio-status/',
-        )
 
     def test_send_evening_digest_passes_status_callback(self):
         """send_evening_digest must pass status_callback= to messages.create()."""

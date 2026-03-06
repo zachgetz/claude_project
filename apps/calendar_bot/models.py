@@ -1,3 +1,5 @@
+# CalendarToken stores OAuth tokens for Google Calendar integration
+# hook test 3
 import uuid
 
 from django.db import models

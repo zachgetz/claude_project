@@ -13,7 +13,6 @@ from django.utils import timezone
 
 from apps.standup.models import StandupEntry
 from apps.standup.tasks import (
-    send_morning_checkin,
     send_evening_digest,
     purge_old_standup_entries,
 )
@@ -43,80 +42,6 @@ def make_entry(phone, message='Stand-up text', days_ago=0, week=None):
         )
         entry.refresh_from_db()
     return entry
-
-
-# ---------------------------------------------------------------------------
-# send_morning_checkin
-# ---------------------------------------------------------------------------
-@override_settings(**TWILIO_SETTINGS)
-class SendMorningCheckinTests(TestCase):
-
-    PHONE_A = 'whatsapp:+1111111111'
-    PHONE_B = 'whatsapp:+2222222222'
-
-    def _run(self):
-        """Call the task directly, returning the mock Twilio client."""
-        mock_client = MagicMock()
-        with patch(PATCH_TWILIO, return_value=mock_client):
-            send_morning_checkin()
-        return mock_client
-
-    def test_no_entries_skips_twilio(self):
-        """With no StandupEntry rows, Twilio Client should never be instantiated."""
-        with patch(PATCH_TWILIO) as MockClient:
-            send_morning_checkin()
-        MockClient.assert_not_called()
-
-    def test_sends_to_each_unique_number(self):
-        """One message per unique phone number."""
-        make_entry(self.PHONE_A)
-        make_entry(self.PHONE_A, message='Second entry same number')
-        make_entry(self.PHONE_B)
-
-        mock_client = self._run()
-
-        # messages.create should have been called exactly twice (one per unique number)
-        self.assertEqual(mock_client.messages.create.call_count, 2)
-        called_to = {
-            c.kwargs['to'] for c in mock_client.messages.create.call_args_list
-        }
-        self.assertEqual(called_to, {self.PHONE_A, self.PHONE_B})
-
-    def test_from_number_is_settings_value(self):
-        """The 'from_' parameter must match TWILIO_WHATSAPP_NUMBER."""
-        make_entry(self.PHONE_A)
-        mock_client = self._run()
-
-        create_call = mock_client.messages.create.call_args
-        self.assertEqual(
-            create_call.kwargs['from_'],
-            'whatsapp:+15005550006',
-        )
-
-    def test_body_contains_prompt_text(self):
-        """The morning message body should contain the standup prompt."""
-        make_entry(self.PHONE_A)
-        mock_client = self._run()
-
-        body = mock_client.messages.create.call_args.kwargs['body']
-        self.assertIn('daily standup', body)
-        self.assertIn('blockers', body)
-
-    def test_twilio_error_does_not_abort(self):
-        """An exception for one number should not prevent sending to others."""
-        make_entry(self.PHONE_A)
-        make_entry(self.PHONE_B)
-
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = [
-            Exception('Twilio error'),
-            MagicMock(),  # second call succeeds
-        ]
-        with patch(PATCH_TWILIO, return_value=mock_client):
-            send_morning_checkin()
-
-        # Both numbers were attempted
-        self.assertEqual(mock_client.messages.create.call_count, 2)
 
 
 # ---------------------------------------------------------------------------

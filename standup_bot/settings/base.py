@@ -91,6 +91,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.calendar_bot.tasks.renew_watch_channels',
         'schedule': crontab(hour='3', minute='0'),  # 3am UTC daily
     },
+    'run-monitoring-agent': {
+        'task': 'apps.bot.tasks.run_monitoring_agent',
+        'schedule': crontab(hour='6', minute='0'),  # 6am UTC = 8am Israel
+    },
 }
 
 LOGGING = {

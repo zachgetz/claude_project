@@ -1,7 +1,8 @@
-from django.db import models
+from django.db import models  # hook test
 from django.utils import timezone
 
 
+# Stores daily standup entries per user
 class StandupEntry(models.Model):
     phone_number = models.CharField(max_length=30)
     message = models.TextField()
@@ -18,7 +19,7 @@ class StandupEntry(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-        verbose_name_plural = 'Standup Entries'
+        verbose_name_plural = "Standup Entries"
         indexes = [
             models.Index(fields=['phone_number'], name='standup_phone_idx'),
             models.Index(fields=['week_number'], name='standup_week_idx'),
