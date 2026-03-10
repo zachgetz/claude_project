@@ -199,8 +199,8 @@ def create_event(phone_number, target_date, start_time_str, end_time_str, title,
         (False, error_message_str) on failure
     """
     logger.info(
-        'create_event called: phone=%s date=%s start=%s end=%s title=%r',
-        phone_number, target_date, start_time_str, end_time_str, title,
+        'create_event called: phone=%s date=%s start=%s end=%s title=%r email=%r label=%r',
+        phone_number, target_date, start_time_str, end_time_str, title, calendar_email, calendar_label,
     )
 
     base_qs = CalendarToken.objects.filter(phone_number=phone_number)
@@ -209,11 +209,12 @@ def create_event(phone_number, target_date, start_time_str, end_time_str, title,
     elif calendar_label:
         token = base_qs.filter(account_label__iexact=calendar_label).order_by('-created_at').first()
         if token is None:
-            # Label didn't match — fall back to most recently connected
+            logger.warning('create_event: label %r not matched, falling back to most recent token', calendar_label)
             token = base_qs.order_by('-created_at').first()
     else:
         token = base_qs.order_by('-created_at').first()
     if token is None:
+        logger.warning('create_event: no token found for phone=%s', phone_number)
         return False, 'no_token'
 
     user_tz = get_user_tz(phone_number)
