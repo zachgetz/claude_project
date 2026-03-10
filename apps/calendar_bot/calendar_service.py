@@ -203,12 +203,16 @@ def create_event(phone_number, target_date, start_time_str, end_time_str, title,
         phone_number, target_date, start_time_str, end_time_str, title,
     )
 
-    qs = CalendarToken.objects.filter(phone_number=phone_number)
+    base_qs = CalendarToken.objects.filter(phone_number=phone_number)
     if calendar_email:
-        qs = qs.filter(account_email=calendar_email)
+        token = base_qs.filter(account_email=calendar_email).order_by('-created_at').first()
     elif calendar_label:
-        qs = qs.filter(account_label__iexact=calendar_label)
-    token = qs.order_by('-created_at').first()
+        token = base_qs.filter(account_label__iexact=calendar_label).order_by('-created_at').first()
+        if token is None:
+            # Label didn't match — fall back to most recently connected
+            token = base_qs.order_by('-created_at').first()
+    else:
+        token = base_qs.order_by('-created_at').first()
     if token is None:
         return False, 'no_token'
 

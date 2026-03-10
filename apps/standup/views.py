@@ -350,9 +350,8 @@ class WhatsAppWebhookView(APIView):
         if not calendar_email and len(tokens) > 1:
             lines = ['לאיזה יומן להוסיף את האירוע?']
             for i, t in enumerate(tokens, 1):
-                label = t.account_label or t.account_email
-                lines.append(f'{i}. {label} ({t.account_email})')
-            lines.append('ענה עם שם הכינוי, מספר, או כתובת האימייל.')
+                lines.append(f'{i}. {t.account_email}')
+            lines.append('ענה עם מספר או שם היומן.')
             return '\n'.join(lines)
 
         user_tz = get_user_tz(from_number)
