@@ -244,7 +244,14 @@ def create_event(phone_number, target_date, start_time_str, end_time_str, title,
             phone_number, event_id, title,
         )
         return True, event_id
-    except Exception:
+    except Exception as exc:
+        if 'invalid_grant' in str(exc) or 'Token has been expired or revoked' in str(exc):
+            logger.warning(
+                'create_event: token revoked for phone=%s email=%s, deleting token',
+                phone_number, token.account_email,
+            )
+            token.delete()
+            return False, 'token_revoked'
         logger.exception(
             'create_event API error: phone=%s title=%r',
             phone_number, title,

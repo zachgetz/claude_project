@@ -347,7 +347,7 @@ class WhatsAppWebhookView(APIView):
                 if target_date is None:
                     return 'לא הצלחתי להבין את התאריך. אנא ציין תאריך מחדש.'
 
-        ok, _ = create_event(
+        ok, error_code = create_event(
             from_number, target_date, start_time, end_time, title,
             description=description, location=location,
         )
@@ -358,6 +358,8 @@ class WhatsAppWebhookView(APIView):
                 end=end_time,
                 title=title,
             )
+        if error_code == 'token_revoked':
+            return 'פג תוקף החיבור ליומן. שלח "חבר יומן" כדי להתחבר מחדש.'
         return s.SCHEDULE_ERROR
 
     # ----------------------------------------------------------------------- #
