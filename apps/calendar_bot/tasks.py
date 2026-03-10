@@ -107,8 +107,11 @@ def _send_digest_for_phone(client, from_number, phone_number, primary_token):
         len(items),
     )
 
-    # Build name part safely (token.name may not exist yet — TZA-92 adds it)
-    user_name = getattr(primary_token, 'name', '') or ''
+    # Fresh DB query to find the first non-empty name for this phone
+    token_with_name = CalendarToken.objects.filter(
+        phone_number=phone_number
+    ).exclude(name='').order_by('created_at').first()
+    user_name = token_with_name.name if token_with_name else ''
     name_part = f' {user_name}' if user_name else ''
 
     # Skip if no meetings and user hasn't opted into always-send
@@ -121,26 +124,26 @@ def _send_digest_for_phone(client, from_number, phone_number, primary_token):
         return
 
     if not items:
-        message = f'☀️ בוקר טוב{name_part}! 🌟\n\n🎉 אין פגישות היום — תהנה!'
+        message = f'\u2600\ufe0f \u05d1\u05d5\u05e7\u05e8 \u05d8\u05d5\u05d1{name_part}! \U0001f31f\n\n\U0001f389 \u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d4\u05d9\u05d5\u05dd \u2014 \u05ea\u05d4\u05e0\u05d4!'
     else:
         # Count timed events (those with an actual start time, not all-day)
-        timed_count = sum(1 for ev in items if ev.get('start_str', 'All day') != 'All day')
+        timed_count = sum(1 for ev in items if ev.get('start_str', '\u05db\u05dc \u05d4\u05d9\u05d5\u05dd') != '\u05db\u05dc \u05d4\u05d9\u05d5\u05dd')
 
-        lines = [f'☀️ בוקר טוב{name_part}! אלה הפגישות שלך להיום:']
+        lines = [f'\u2600\ufe0f \u05d1\u05d5\u05e7\u05e8 \u05d8\u05d5\u05d1{name_part}! \u05d0\u05dc\u05d4 \u05d4\u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05e9\u05dc\u05da \u05dc\u05d4\u05d9\u05d5\u05dd:']
         for ev in items:
-            time_str = ev.get('start_str', 'All day')
-            summary = ev.get('summary', '(No title)')
+            time_str = ev.get('start_str', '\u05db\u05dc \u05d4\u05d9\u05d5\u05dd')
+            summary = ev.get('summary', '(\u05dc\u05dc\u05d0 \u05db\u05d5\u05ea\u05e8\u05ea)')
             lines.append(f'{time_str} {summary}')
 
         # Closing line based on timed meeting count
         if timed_count == 0:
-            closing = '\n\n🎉 אין פגישות היום — תהנה!'
+            closing = '\n\n\U0001f389 \u05d0\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d4\u05d9\u05d5\u05dd \u2014 \u05ea\u05d4\u05e0\u05d4!'
         elif timed_count <= 4:
-            closing = '\n\n✨ יום פרודוקטיבי לפניך!'
+            closing = '\n\n\u2728 \u05d9\u05d5\u05dd \u05e4\u05e8\u05d5\u05d3\u05d5\u05e7\u05d8\u05d9\u05d1\u05d9 \u05dc\u05e4\u05e0\u05d9\u05da!'
         elif timed_count <= 6:
-            closing = '\n\n💪 יום עמוס — תזכור לנשום בין פגישות 🧘'
+            closing = '\n\n\U0001f4aa \u05d9\u05d5\u05dd \u05e2\u05de\u05d5\u05e1 \u2014 \u05ea\u05d6\u05db\u05d5\u05e8 \u05dc\u05e0\u05e9\u05d5\u05dd \u05d1\u05d9\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \U0001f9d8'
         else:
-            closing = '\n\n🔥 מרתון פגישות היום! שמור על עצמך'
+            closing = '\n\n\U0001f525 \u05de\u05e8\u05ea\u05d5\u05df \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d4\u05d9\u05d5\u05dd! \u05e9\u05de\u05d5\u05e8 \u05e2\u05dc \u05e2\u05e6\u05de\u05da'
 
         message = '\n'.join(lines) + closing
 
