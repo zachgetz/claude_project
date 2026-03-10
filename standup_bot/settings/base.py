@@ -68,6 +68,9 @@ GOOGLE_CLIENT_SECRET = config('GOOGLE_CLIENT_SECRET')
 # Webhook base URL for Google Calendar push notifications
 WEBHOOK_BASE_URL = config('WEBHOOK_BASE_URL', default='')
 
+# Claude AI API key (NLP intent handler)
+ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
+
 # Celery
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='django-db')
@@ -90,6 +93,10 @@ CELERY_BEAT_SCHEDULE = {
     'renew-watch-channels': {
         'task': 'apps.calendar_bot.tasks.renew_watch_channels',
         'schedule': crontab(hour='3', minute='0'),  # 3am UTC daily
+    },
+    'run-monitoring-agent': {
+        'task': 'apps.bot.tasks.run_monitoring_agent',
+        'schedule': crontab(hour='6', minute='0'),  # 6am UTC = 8am Israel
     },
 }
 

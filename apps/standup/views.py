@@ -1,24 +1,30 @@
 """
-TZA-110: Full menu-driven WhatsApp bot redesign.
+NLP-driven WhatsApp bot — replaces the digit-based state machine with open
+Hebrew natural language understood by Claude (tool-use API).
 
-State machine:
- - Root level: ANY input -> show main menu and set state='main_menu'.
- - main_menu state: digit 1-6 enters corresponding submenu.
- - Inside a numbered submenu: only valid digits (including 0) accepted.
-   Any other input -> INVALID_OPTION + re-show current menu.
- - Inside Schedule flow (action='schedule'): free text on text steps,
-   structured validation on date/time steps. 0 or 'batel' at any step -> cancel.
+Request flow:
+  POST /standup/webhook/
+    → onboarding check (new/mid-onboarding users handled before Claude)
+    → ask_claude_with_tools(message, history)
+    → if tool_use → execute_tool → ask_claude_with_result → final reply
+    → save 6-turn conversation history in UserMenuState.pending_data
+    → _xml(reply) → Twilio → WhatsApp
 
-All bot response text is 100% Hebrew. Only exception: user-provided content
-(e.g. event title typed in English).
+What stays from the old state machine:
+  _xml(), _query_meetings_msg(), _query_next_meeting_msg(),
+  _query_free_time_msg(), _query_birthdays_msg(), _handle_connect_calendar(),
+  _handle_name_collection(), _handle_summary(), _parse_date_input(),
+  _parse_time_hhmm(), _format_date_he().
 
-TZA-121: After returning a result from a meetings/free-time/birthdays submenu
-selection, keep pending_action set to the current submenu state and re-display
-the submenu options. Only clear submenu state when user sends 0 or \u05d1\u05d8\u05dc.
+What was removed:
+  _handle_root(), _handle_main_menu_pick(), _handle_menu_state(),
+  _handle_schedule_step(), _get_state(), _set_state(), _clear_state(),
+  TZ_MAP, _main_menu_text(), _settings_menu_text().
 """
 import datetime
 import logging
 import re
+
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils.decorators import method_decorator
@@ -40,21 +46,7 @@ import apps.standup.strings_he as _strings_he
 
 MENU_TEXT = _strings_he.MAIN_MENU_TEXT
 HELP_TEXT = _strings_he.HELP_TEXT
-# MENU_TRIGGERS kept for any code that imported it:
 MENU_TRIGGERS = {'menu', 'options', 'calendar', '0'}
-
-# --------------------------------------------------------------------------- #
-# Timezone map for settings submenu (index 0 = option 1)
-# --------------------------------------------------------------------------- #
-
-TZ_MAP = [
-    'Asia/Jerusalem',
-    'Europe/London',
-    'America/New_York',
-    'Europe/Paris',
-    'Asia/Dubai',
-    'America/Los_Angeles',
-]
 
 
 # --------------------------------------------------------------------------- #
@@ -68,34 +60,7 @@ def _xml(text):
 
 
 # --------------------------------------------------------------------------- #
-# State helpers (UserMenuState)
-# --------------------------------------------------------------------------- #
-
-def _get_state(phone_number):
-    """Return (pending_action, pending_step, pending_data) for a phone number."""
-    from apps.calendar_bot.models import UserMenuState
-    try:
-        s = UserMenuState.objects.get(phone_number=phone_number)
-        return s.pending_action, s.pending_step, s.pending_data or {}
-    except UserMenuState.DoesNotExist:
-        return None, None, {}
-
-
-def _set_state(phone_number, action, step, data):
-    from apps.calendar_bot.models import UserMenuState
-    UserMenuState.objects.update_or_create(
-        phone_number=phone_number,
-        defaults={'pending_action': action, 'pending_step': step, 'pending_data': data},
-    )
-
-
-def _clear_state(phone_number):
-    from apps.calendar_bot.models import UserMenuState
-    UserMenuState.objects.filter(phone_number=phone_number).delete()
-
-
-# --------------------------------------------------------------------------- #
-# Date/time validation helpers for Schedule flow
+# Date/time helpers (kept for create_event parsing)
 # --------------------------------------------------------------------------- #
 
 def _parse_date_input(text, user_tz):
@@ -107,12 +72,11 @@ def _parse_date_input(text, user_tz):
     now_local = datetime.datetime.now(tz=user_tz)
     today = now_local.date()
 
-    if text in ('\u05d4\u05d9\u05d5\u05dd', 'today'):
+    if text in ('היום', 'today'):
         return today
-    if text in ('\u05de\u05d7\u05e8', 'tomorrow'):
+    if text in ('מחר', 'tomorrow'):
         return today + datetime.timedelta(days=1)
 
-    # DD/MM
     m = re.match(r'^(\d{1,2})/(\d{1,2})$', text)
     if m:
         day, month = int(m.group(1)), int(m.group(2))
@@ -125,7 +89,6 @@ def _parse_date_input(text, user_tz):
         except ValueError:
             return None
 
-    # DD/MM/YYYY
     m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', text)
     if m:
         day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -154,33 +117,68 @@ def _format_date_he(d):
     return d.strftime('%d/%m/%Y')
 
 
-def _main_menu_text(phone_number):
-    """Return main menu text with optional personalized greeting."""
-    import apps.standup.strings_he as s
-    from apps.calendar_bot.models import CalendarToken
-    token = CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at').first()
-    name = token.name if (token and token.name) else ''
-    if name:
-        greeting = f'\u05d4\u05d9\u05d9 {name}! \u05d0\u05d9\u05d6\u05d4 \u05db\u05d9\u05e3 \u05e9\u05d0\u05ea\u05d4 \u05e4\u05d4 \U0001f389\n\n'
-    else:
-        greeting = '\u05e9\u05dc\u05d5\u05dd! \U0001f60a\n\n'
-    return greeting + s.MAIN_MENU_TEXT
+# --------------------------------------------------------------------------- #
+# State helpers — stubs kept for back-compat with remaining tests
+# (The digit-menu state machine is removed; these write to UserMenuState but
+#  the new NLP handler does not read pending_action/pending_step.)
+# --------------------------------------------------------------------------- #
+
+def _set_state(phone_number, action, step, data):
+    from apps.calendar_bot.models import UserMenuState
+    UserMenuState.objects.update_or_create(
+        phone_number=phone_number,
+        defaults={'pending_action': action, 'pending_step': step, 'pending_data': data or {}},
+    )
 
 
-def _settings_menu_text(phone_number):
-    """Return settings menu text with dynamic name item."""
-    import apps.standup.strings_he as s
-    from apps.calendar_bot.models import CalendarToken
-    token = CalendarToken.objects.filter(phone_number=phone_number).order_by('created_at').first()
-    name_item = s.NAME_MENU_ITEM_CHANGE if (token and token.name) else s.NAME_MENU_ITEM_NEW
-    return (
-        "\u2699\ufe0f \u05d4\u05d2\u05d3\u05e8\u05d5\u05ea:\n"
-        "1. \U0001f30d \u05d0\u05d6\u05d5\u05e8 \u05d6\u05de\u05df\n"
-        "2. \u23f0 \u05e9\u05e2\u05ea \u05d4\u05ea\u05e8\u05d0\u05d4 \u05d9\u05d5\u05de\u05d9\u05ea\n"
-        "3. \U0001f517 \u05d7\u05d1\u05e8 \u05d9\u05d5\u05de\u05df \u05e0\u05d5\u05e1\u05e3\n"
-        "4. \u274c \u05e0\u05ea\u05e7 \u05d9\u05d5\u05de\u05df\n"
-        f"{name_item}\n"
-        "0. \u05d7\u05d6\u05e8\u05d4 \u05dc\u05ea\u05e4\u05e8\u05d9\u05d8"
+def _get_state(phone_number):
+    from apps.calendar_bot.models import UserMenuState
+    try:
+        s = UserMenuState.objects.get(phone_number=phone_number)
+        return s.pending_action, s.pending_step, s.pending_data or {}
+    except UserMenuState.DoesNotExist:
+        return None, None, {}
+
+
+def _clear_state(phone_number):
+    from apps.calendar_bot.models import UserMenuState
+    UserMenuState.objects.filter(phone_number=phone_number).delete()
+
+
+# --------------------------------------------------------------------------- #
+# Conversation history helpers (stored in UserMenuState.pending_data)
+# --------------------------------------------------------------------------- #
+
+def _get_conversation_history(phone_number):
+    """Return the last N conversation turns as a list of message dicts."""
+    from apps.calendar_bot.models import UserMenuState
+    try:
+        s = UserMenuState.objects.get(phone_number=phone_number)
+        data = s.pending_data or {}
+        return data.get('history', [])
+    except UserMenuState.DoesNotExist:
+        return []
+
+
+def _save_conversation_history(phone_number, user_message, assistant_message):
+    """Append the latest exchange and persist (keep last 6 turns = 12 messages)."""
+    from apps.calendar_bot.models import UserMenuState
+    try:
+        s = UserMenuState.objects.get(phone_number=phone_number)
+        data = s.pending_data or {}
+    except UserMenuState.DoesNotExist:
+        data = {}
+
+    history = data.get('history', [])
+    history.append({"role": "user", "content": user_message})
+    history.append({"role": "assistant", "content": assistant_message})
+    if len(history) > 12:
+        history = history[-12:]
+
+    data['history'] = history
+    UserMenuState.objects.update_or_create(
+        phone_number=phone_number,
+        defaults={'pending_action': None, 'pending_step': None, 'pending_data': data},
     )
 
 
@@ -193,68 +191,64 @@ class WhatsAppWebhookView(APIView):
 
     def post(self, request, *args, **kwargs):
         from_number = request.data.get('From', '')
-        body = request.data.get('Body', '') or ''
-        body_stripped = body.strip()
-        body_lower = body_stripped.lower()
+        body = (request.data.get('Body', '') or '').strip()
 
         logger.info('Incoming webhook: phone=%s body=%.50r', from_number, body)
 
-        # -- Legacy /summary command ---------------------------------------- #
-        if body_lower == '/summary':
+        if not body:
+            return Response(status=400)
+
+        # Legacy /summary command
+        if body.lower() == '/summary':
             return self._handle_summary(from_number)
 
-        # -- Retrieve current state ----------------------------------------- #
-        action, step, data = _get_state(from_number)
+        # Onboarding: new users or users mid-onboarding
+        onboarding_reply = self._try_onboarding(request, from_number, body)
+        if onboarding_reply is not None:
+            return onboarding_reply
 
-        # ------------------------------------------------------------------- #
-        # STATE: schedule flow
-        # ------------------------------------------------------------------- #
-        if action == 'schedule':
-            return self._handle_schedule_step(request, from_number, body_stripped, step, data)
+        # NLP handler: pass message to Claude with tool use
+        try:
+            from apps.standup.claude_helper import ask_claude_with_tools, ask_claude_with_result
+            history = _get_conversation_history(from_number)
+            result = ask_claude_with_tools(body, history)
 
-        # ------------------------------------------------------------------- #
-        # STATE: inside a numbered submenu
-        # ------------------------------------------------------------------- #
-        if action in ('meetings_menu', 'free_time_menu', 'birthdays_menu',
-                      'settings_menu', 'timezone_menu', 'disconnect_confirm',
-                      'digest_prompt', 'name_prompt'):
-            return self._handle_menu_state(
-                request, from_number, body_stripped, action, step, data
-            )
+            if result['type'] == 'tool_use':
+                tool_result = self._execute_tool(
+                    result['name'], result['input'], from_number, request
+                )
+                final_reply = ask_claude_with_result(body, result, tool_result, history)
+            else:
+                final_reply = result['content']
 
-        # ------------------------------------------------------------------- #
-        # STATE: main_menu (user already saw the main menu; now picking)
-        # ------------------------------------------------------------------- #
-        if action == 'main_menu':
-            return self._handle_main_menu_pick(request, from_number, body_stripped)
+            _save_conversation_history(from_number, body, final_reply)
+            return _xml(final_reply)
 
-        # ------------------------------------------------------------------- #
-        # ROOT LEVEL (no active state)
-        # ------------------------------------------------------------------- #
-        return self._handle_root(request, from_number, body_stripped)
+        except Exception:
+            logger.exception('Claude API error for phone=%s', from_number)
+            return _xml('מצטער, אירעה שגיאה. נסה שוב מאוחר יותר.')
 
     # ----------------------------------------------------------------------- #
-    # Root handler: show main menu (or onboarding for new users)
+    # Onboarding gate — called before Claude for every message
     # ----------------------------------------------------------------------- #
 
-    def _handle_root(self, request, from_number, body_stripped):
+    def _try_onboarding(self, request, from_number, body):
+        """
+        Returns an HttpResponse if this message should be handled by onboarding,
+        or None if the user is connected and should go to Claude.
+        """
         import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken, OnboardingState
 
-        # Empty body
-        if not body_stripped:
-            logger.warning('Empty body from phone=%s', from_number)
-            return Response({'error': 'Body cannot be empty.'}, status=400)
-
-        # Check if user is mid-onboarding (awaiting name)
+        # Mid-onboarding: awaiting the user's name
         try:
             onboarding = OnboardingState.objects.get(phone_number=from_number)
             if onboarding.step == OnboardingState.STEP_AWAITING_NAME:
-                return self._handle_name_collection(request, from_number, body_stripped)
+                return self._handle_name_collection(request, from_number, body)
         except OnboardingState.DoesNotExist:
             pass
 
-        # Check calendar connection
+        # Check whether the user has a calendar connected
         token = CalendarToken.objects.filter(
             phone_number=from_number
         ).order_by('created_at').first()
@@ -262,323 +256,112 @@ class WhatsAppWebhookView(APIView):
 
         if not has_calendar:
             if not OnboardingState.objects.filter(phone_number=from_number).exists():
-                logger.info('First contact - starting onboarding: phone=%s', from_number)
+                logger.info('First contact — starting onboarding: phone=%s', from_number)
                 OnboardingState.objects.get_or_create(phone_number=from_number)
                 return _xml(s.ONBOARDING_GREETING)
             return _xml(s.ONBOARDING_NAME_REPROMPT)
 
-        # Connected user at root -> show main menu, enter main_menu state
-        _set_state(from_number, 'main_menu', 1, {})
-        return _xml(_main_menu_text(from_number))
+        # Connected user — no onboarding, let Claude handle it
+        return None
 
     # ----------------------------------------------------------------------- #
-    # Main menu pick (state='main_menu')
+    # Tool executor — maps Claude tool_use calls to Python/DB functions
     # ----------------------------------------------------------------------- #
 
-    def _handle_main_menu_pick(self, request, from_number, body_stripped):
+    def _execute_tool(self, tool_name, tool_input, from_number, request):
+        """Execute a Claude tool call and return the result as a plain string."""
         import apps.standup.strings_he as s
 
-        digit = body_stripped.strip()
-
-        if digit == '1':
-            _set_state(from_number, 'meetings_menu', 1, {})
-            return _xml(s.MEETINGS_MENU_TEXT)
-
-        if digit == '2':
-            _set_state(from_number, 'free_time_menu', 1, {})
-            return _xml(s.FREE_TIME_MENU_TEXT)
-
-        if digit == '3':
-            _set_state(from_number, 'schedule', 1, {})
-            return _xml(s.SCHEDULE_STEP1)
-
-        if digit == '4':
-            _set_state(from_number, 'birthdays_menu', 1, {})
-            return _xml(s.BIRTHDAYS_MENU_TEXT)
-
-        if digit == '5':
-            _set_state(from_number, 'settings_menu', 1, {})
-            return _xml(_settings_menu_text(from_number))
-
-        if digit == '6':
-            _set_state(from_number, 'main_menu', 1, {})
-            return _xml(s.HELP_TEXT)
-
-        if digit == '0':
-            _set_state(from_number, 'main_menu', 1, {})
-            return _xml(_main_menu_text(from_number))
-
-        # Invalid -> error + re-show main menu
-        _set_state(from_number, 'main_menu', 1, {})
-        return _xml(s.INVALID_OPTION + '\n' + _main_menu_text(from_number))
-
-    # ----------------------------------------------------------------------- #
-    # Numbered submenu state handler
-    # ----------------------------------------------------------------------- #
-
-    def _handle_menu_state(self, request, from_number, body_stripped, action, step, data):
-        import apps.standup.strings_he as s
-
-        digit = body_stripped.strip()
-
-        # ---- Meetings submenu -------------------------------------------- #
-        if action == 'meetings_menu':
-            if digit == '0':
-                _set_state(from_number, 'main_menu', 1, {})
-                return _xml(_main_menu_text(from_number))
-            if digit == '1':
-                _set_state(from_number, 'meetings_menu', 1, {})
-                msg = self._query_meetings_msg(from_number, 'today')
-                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
-            if digit == '2':
-                _set_state(from_number, 'meetings_menu', 1, {})
-                msg = self._query_meetings_msg(from_number, 'tomorrow')
-                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
-            if digit == '3':
-                _set_state(from_number, 'meetings_menu', 1, {})
-                msg = self._query_meetings_msg(from_number, 'this week')
-                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
-            if digit == '4':
-                _set_state(from_number, 'meetings_menu', 1, {})
-                msg = self._query_next_meeting_msg(from_number)
-                return _xml(msg + '\n\n' + s.MEETINGS_MENU_TEXT)
-            return _xml(s.INVALID_OPTION + '\n' + s.MEETINGS_MENU_TEXT)
-
-        # ---- Free time submenu ------------------------------------------- #
-        if action == 'free_time_menu':
-            if digit == '0':
-                _set_state(from_number, 'main_menu', 1, {})
-                return _xml(_main_menu_text(from_number))
-            if digit in ('1', '2', '3'):
-                _set_state(from_number, 'free_time_menu', 1, {})
-                day_map = {'1': 'today', '2': 'tomorrow', '3': 'this week'}
-                msg = self._query_free_time_msg(from_number, day_map[digit])
-                return _xml(msg + '\n\n' + s.FREE_TIME_MENU_TEXT)
-            return _xml(s.INVALID_OPTION + '\n' + s.FREE_TIME_MENU_TEXT)
-
-        # ---- Birthdays submenu ------------------------------------------- #
-        if action == 'birthdays_menu':
-            if digit == '0':
-                _set_state(from_number, 'main_menu', 1, {})
-                return _xml(_main_menu_text(from_number))
-            if digit == '1':
-                _set_state(from_number, 'birthdays_menu', 1, {})
-                msg = self._query_birthdays_msg(from_number, 'week')
-                return _xml(msg + '\n\n' + s.BIRTHDAYS_MENU_TEXT)
-            if digit == '2':
-                _set_state(from_number, 'birthdays_menu', 1, {})
-                msg = self._query_birthdays_msg(from_number, 'month')
-                return _xml(msg + '\n\n' + s.BIRTHDAYS_MENU_TEXT)
-            return _xml(s.INVALID_OPTION + '\n' + s.BIRTHDAYS_MENU_TEXT)
-
-        # ---- Settings submenu -------------------------------------------- #
-        if action == 'settings_menu':
-            if digit == '0':
-                _set_state(from_number, 'main_menu', 1, {})
-                return _xml(_main_menu_text(from_number))
-            if digit == '1':
-                _set_state(from_number, 'timezone_menu', 1, {})
-                return _xml(s.TIMEZONE_MENU_TEXT)
-            if digit == '2':
-                _set_state(from_number, 'digest_prompt', 1, {})
-                return _xml(s.DIGEST_PROMPT)
-            if digit == '3':
-                _clear_state(from_number)
-                return self._handle_connect_calendar(request, from_number)
-            if digit == '4':
-                _set_state(from_number, 'disconnect_confirm', 1, {})
-                return _xml(s.DISCONNECT_CONFIRM_TEXT)
-            if digit == '5':
-                _set_state(from_number, 'name_prompt', 1, {})
-                return _xml(s.NAME_PROMPT)
-            return _xml(s.INVALID_OPTION + '\n' + _settings_menu_text(from_number))
-
-        # ---- Timezone submenu -------------------------------------------- #
-        if action == 'timezone_menu':
-            if digit == '0':
-                _set_state(from_number, 'settings_menu', 1, {})
-                return _xml(_settings_menu_text(from_number))
-            if digit in ('1', '2', '3', '4', '5', '6'):
-                tz_name = TZ_MAP[int(digit) - 1]
-                _clear_state(from_number)
-                return self._set_timezone(from_number, tz_name)
-            return _xml(s.INVALID_OPTION + '\n' + s.TIMEZONE_MENU_TEXT)
-
-        # ---- Digest prompt (free-text step) ------------------------------ #
-        if action == 'digest_prompt':
-            if digit in ('0', '\u05d1\u05d8\u05dc'):
-                _set_state(from_number, 'main_menu', 1, {})
-                return _xml(_main_menu_text(from_number))
-            t = _parse_time_hhmm(body_stripped)
-            if t is None:
-                return _xml(s.DIGEST_INVALID + '\n' + s.DIGEST_PROMPT)
-            h, m = t
-            from apps.calendar_bot.models import CalendarToken
-            CalendarToken.objects.filter(phone_number=from_number).update(
-                digest_hour=h, digest_minute=m, digest_enabled=True
+        if tool_name == 'get_meetings':
+            return self._query_meetings_msg(
+                from_number, tool_input.get('date_description', 'today')
             )
-            _clear_state(from_number)
-            logger.info('Digest time set to %02d:%02d for phone=%s', h, m, from_number)
-            return _xml(s.DIGEST_TIME_SET.format(hour=h, minute=m))
 
-        # ---- Name prompt (free-text step) -------------------------------- #
-        if action == 'name_prompt':
-            if digit == '0':
-                _set_state(from_number, 'settings_menu', 1, {})
-                return _xml(_settings_menu_text(from_number))
-            name = body_stripped.strip()
-            if not name:
-                return _xml(s.NAME_PROMPT)
+        if tool_name == 'get_next_meeting':
+            return self._query_next_meeting_msg(from_number)
+
+        if tool_name == 'get_free_time':
+            return self._query_free_time_msg(
+                from_number, tool_input.get('date_description', 'today')
+            )
+
+        if tool_name == 'get_birthdays':
+            period = tool_input.get('period_description', 'week')
+            period = 'month' if 'month' in period.lower() else 'week'
+            return self._query_birthdays_msg(from_number, period)
+
+        if tool_name == 'create_event':
+            return self._execute_create_event(tool_input, from_number)
+
+        if tool_name == 'set_timezone':
+            tz_name = tool_input.get('timezone_name', 'Asia/Jerusalem')
             from apps.calendar_bot.models import CalendarToken
-            CalendarToken.objects.filter(phone_number=from_number).update(name=name)
-            _clear_state(from_number)
-            logger.info('Name set to %r for phone=%s', name, from_number)
-            return _xml(s.NAME_SET.format(name=name))
+            CalendarToken.objects.filter(phone_number=from_number).update(timezone=tz_name)
+            logger.info('Timezone set to %s for phone=%s', tz_name, from_number)
+            return f'אזור הזמן עודכן ל-{tz_name}'
 
-        # ---- Disconnect confirm ------------------------------------------ #
-        if action == 'disconnect_confirm':
-            if digit in ('0', '2', '\u05dc\u05d0'):
-                _set_state(from_number, 'main_menu', 1, {})
-                return _xml(_main_menu_text(from_number))
-            if digit == '1':
-                _clear_state(from_number)
-                return self._disconnect_calendar(from_number)
-            return _xml(s.INVALID_OPTION + '\n' + s.DISCONNECT_CONFIRM_TEXT)
+        if tool_name == 'connect_calendar':
+            webhook_base_url = getattr(settings, 'WEBHOOK_BASE_URL', '')
+            if webhook_base_url:
+                auth_url = webhook_base_url.rstrip('/') + f'/calendar/auth/start/?phone={from_number}'
+            else:
+                auth_url = request.build_absolute_uri(
+                    f'/calendar/auth/start/?phone={from_number}'
+                )
+            return auth_url
 
-        # Fallback
-        _set_state(from_number, 'main_menu', 1, {})
-        return _xml(_main_menu_text(from_number))
+        if tool_name == 'disconnect_calendar':
+            from apps.calendar_bot.models import CalendarToken
+            deleted, _ = CalendarToken.objects.filter(phone_number=from_number).delete()
+            logger.info(
+                'Calendar disconnected for phone=%s (deleted %d tokens)', from_number, deleted
+            )
+            return f'היומן נותק בהצלחה. נמחקו {deleted} חיבורים.'
 
-    # ----------------------------------------------------------------------- #
-    # Schedule flow (multi-step)
-    # ----------------------------------------------------------------------- #
+        return f'כלי לא מוכר: {tool_name}'
 
-    def _handle_schedule_step(self, request, from_number, body_stripped, step, data):
+    def _execute_create_event(self, tool_input, from_number):
+        """Parse tool_input and call create_event in calendar_service."""
         import apps.standup.strings_he as s
-        from apps.calendar_bot.calendar_service import get_user_tz, create_event
+        from apps.calendar_bot.calendar_service import create_event, get_user_tz
 
-        # Cancel anytime with 0 or 'batel' (Hebrew: cancel).
-        # Use _set_state('main_menu') instead of _clear_state so the very next
-        # message is routed via _handle_main_menu_pick and the bot stays responsive.
-        if body_stripped in ('0', '\u05d1\u05d8\u05dc'):
-            _set_state(from_number, 'main_menu', 1, {})
-            return _xml(s.SCHEDULE_CANCELLED + '\n' + _main_menu_text(from_number))
+        date_desc = tool_input.get('date_description', '')
+        start_time = tool_input.get('start_time', '')
+        end_time = tool_input.get('end_time', '')
+        title = tool_input.get('title', '')
+        description = tool_input.get('description')
+        location = tool_input.get('location')
 
         user_tz = get_user_tz(from_number)
+        today = datetime.datetime.now(tz=user_tz).date()
 
-        # Step 1: date
-        if step == 1:
-            d = _parse_date_input(body_stripped, user_tz)
-            if d is None:
-                return _xml(s.SCHEDULE_INVALID + '\n' + s.SCHEDULE_STEP1)
-            data['date'] = d.isoformat()
-            _set_state(from_number, 'schedule', 2, data)
-            return _xml(s.SCHEDULE_STEP2)
+        if date_desc.lower() == 'today':
+            target_date = today
+        elif date_desc.lower() == 'tomorrow':
+            target_date = today + datetime.timedelta(days=1)
+        else:
+            try:
+                target_date = datetime.date.fromisoformat(date_desc)
+            except (ValueError, TypeError):
+                target_date = _parse_date_input(date_desc, user_tz)
+                if target_date is None:
+                    return 'לא הצלחתי להבין את התאריך. אנא ציין תאריך מחדש.'
 
-        # Step 2: start time
-        if step == 2:
-            t = _parse_time_hhmm(body_stripped)
-            if t is None:
-                return _xml(s.SCHEDULE_INVALID + '\n' + s.SCHEDULE_STEP2)
-            data['start'] = f'{t[0]:02d}:{t[1]:02d}'
-            _set_state(from_number, 'schedule', 3, data)
-            return _xml(s.SCHEDULE_STEP3)
-
-        # Step 3: end time
-        if step == 3:
-            t = _parse_time_hhmm(body_stripped)
-            if t is None:
-                return _xml(s.SCHEDULE_INVALID + '\n' + s.SCHEDULE_STEP3)
-            start_h, start_m = [int(x) for x in data['start'].split(':')]
-            end_h, end_m = t[0], t[1]
-            if (end_h * 60 + end_m) <= (start_h * 60 + start_m):
-                return _xml(s.SCHEDULE_INVALID + '\n' + s.SCHEDULE_STEP3)
-            data['end'] = f'{end_h:02d}:{end_m:02d}'
-            _set_state(from_number, 'schedule', 4, data)
-            return _xml(s.SCHEDULE_STEP4)
-
-        # Step 4: title (non-empty)
-        if step == 4:
-            title = body_stripped.strip()
-            if not title:
-                return _xml(s.SCHEDULE_INVALID + '\n' + s.SCHEDULE_STEP4)
-            data['title'] = title
-            _set_state(from_number, 'schedule', 5, data)
-            return _xml(s.SCHEDULE_STEP5)
-
-        # Step 5: description (or 'daleg' to skip)
-        if step == 5:
-            if body_stripped == '\u05d3\u05dc\u05d2':
-                data['description'] = None
-            else:
-                data['description'] = body_stripped
-            _set_state(from_number, 'schedule', 6, data)
-            return _xml(s.SCHEDULE_STEP6)
-
-        # Step 6: location (or 'daleg' to skip)
-        if step == 6:
-            if body_stripped == '\u05d3\u05dc\u05d2':
-                data['location'] = None
-            else:
-                data['location'] = body_stripped
-            _set_state(from_number, 'schedule', 7, data)
-            return _xml(self._build_schedule_summary(data))
-
-        # Step 7: confirm (asher / batel)
-        if step == 7:
-            if body_stripped == '\u05d1\u05d8\u05dc':
-                # Use _set_state so the bot remains responsive at main_menu level.
-                _set_state(from_number, 'main_menu', 1, {})
-                return _xml(s.SCHEDULE_CANCELLED + '\n' + _main_menu_text(from_number))
-            if body_stripped == '\u05d0\u05e9\u05e8':
-                # Use _set_state so the bot remains responsive at main_menu level.
-                _set_state(from_number, 'main_menu', 1, {})
-                target_date = datetime.date.fromisoformat(data['date'])
-                ok, result = create_event(
-                    from_number,
-                    target_date,
-                    data['start'],
-                    data['end'],
-                    data['title'],
-                    description=data.get('description'),
-                    location=data.get('location'),
-                )
-                if ok:
-                    msg = s.SCHEDULE_CREATED.format(
-                        date=_format_date_he(target_date),
-                        start=data['start'],
-                        end=data['end'],
-                        title=data['title'],
-                    )
-                    return _xml(msg)
-                else:
-                    return _xml(s.SCHEDULE_ERROR + '\n' + _main_menu_text(from_number))
-            # Any other input at confirmation step -> re-show summary
-            return _xml(s.SCHEDULE_INVALID + '\n' + self._build_schedule_summary(data))
-
-        # Unexpected step: reset to main_menu state so the bot stays responsive.
-        _set_state(from_number, 'main_menu', 1, {})
-        return _xml(_main_menu_text(from_number))
-
-    def _build_schedule_summary(self, data):
-        target_date = datetime.date.fromisoformat(data['date'])
-        desc_display = data.get('description') or '\u2014'
-        loc_display = data.get('location') or '\u2014'
-        return (
-            '\u05e7\u05d1\u05e2 \u05e4\u05d2\u05d9\u05e9\u05d4:\n'
-            f'\U0001f4c5 \u05ea\u05d0\u05e8\u05d9\u05da: {_format_date_he(target_date)}\n'
-            f'\U0001f550 \u05e9\u05e2\u05d4: {data["start"]}\u2013{data["end"]}\n'
-            f'\U0001f4dd \u05db\u05d5\u05ea\u05e8\u05ea: {data["title"]}\n'
-            f'\U0001f4ac \u05ea\u05d9\u05d0\u05d5\u05e8: {desc_display}\n'
-            f'\U0001f4cd \u05de\u05d9\u05e7\u05d5\u05dd: {loc_display}\n\n'
-            '\u05dc\u05d0\u05d9\u05e9\u05d5\u05e8 \u05e9\u05dc\u05d7: \u05d0\u05e9\u05e8\n'
-            '\u05dc\u05d1\u05d9\u05d8\u05d5\u05dc \u05e9\u05dc\u05d7: \u05d1\u05d8\u05dc'
+        ok, _ = create_event(
+            from_number, target_date, start_time, end_time, title,
+            description=description, location=location,
         )
+        if ok:
+            return s.SCHEDULE_CREATED.format(
+                date=_format_date_he(target_date),
+                start=start_time,
+                end=end_time,
+                title=title,
+            )
+        return s.SCHEDULE_ERROR
 
     # ----------------------------------------------------------------------- #
-    # Calendar query helpers — message-string variants (TZA-121)
-    # These return a plain string (not wrapped in _xml) so callers can append
-    # submenu text before wrapping in _xml.
+    # Calendar query helpers — return plain strings (no _xml wrapper)
     # ----------------------------------------------------------------------- #
 
     def _query_meetings_msg(self, from_number, period):
@@ -598,9 +381,16 @@ class WhatsAppWebhookView(APIView):
         today = datetime.datetime.now(tz=user_tz).date()
         target, label = resolve_day(period, today)
 
+        # Fallback: try ISO date parse if resolve_day didn't recognise the string
+        if target is None:
+            try:
+                target = datetime.date.fromisoformat(period)
+                label = target.strftime('%A, %b %-d')
+            except (ValueError, TypeError):
+                target = today
+                label = today.strftime('%A, %b %-d')
+
         if target == 'week':
-            # Israeli calendar: week starts on Sunday
-            # (today.weekday() + 1) % 7 gives days since last Sunday
             week_start = today - datetime.timedelta(days=(today.weekday() + 1) % 7)
             week_end = week_start + datetime.timedelta(days=6)
             week_events = {}
@@ -650,18 +440,11 @@ class WhatsAppWebhookView(APIView):
                     time_until = ev['start'] - now_local
                     minutes_until = int(time_until.total_seconds() / 60)
                     if minutes_until < 60:
-                        until_str = (
-                            f'\u05d1\u05e2\u05d5\u05d3 {minutes_until} \u05d3\u05e7\u05d5\u05ea'
-                        )
+                        until_str = f'בעוד {minutes_until} דקות'
                     elif minutes_until < 120:
-                        until_str = (
-                            f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} '
-                            f'\u05e9\u05e2\u05d4 {minutes_until % 60} \u05d3\u05e7\u05d5\u05ea'
-                        )
+                        until_str = f'בעוד {minutes_until // 60} שעה {minutes_until % 60} דקות'
                     else:
-                        until_str = (
-                            f'\u05d1\u05e2\u05d5\u05d3 {minutes_until // 60} \u05e9\u05e2\u05d5\u05ea'
-                        )
+                        until_str = f'בעוד {minutes_until // 60} שעות'
                     if days_offset == 0:
                         return s.NEXT_MEETING_PREFIX.format(
                             summary=ev['summary'], time=ev['start_str'], until=until_str)
@@ -692,7 +475,6 @@ class WhatsAppWebhookView(APIView):
         today = datetime.datetime.now(tz=user_tz).date()
 
         if period == 'this week':
-            # Israeli calendar: week starts on Sunday
             week_start = today - datetime.timedelta(days=(today.weekday() + 1) % 7)
             lines = []
             for i in range(7):
@@ -700,15 +482,23 @@ class WhatsAppWebhookView(APIView):
                 slots = get_free_slots_for_date(from_number, d)
                 day_name = d.strftime('%A')
                 if slots is None:
-                    lines.append(f'{day_name}: \u05e9\u05d2\u05d9\u05d0\u05d4')
+                    lines.append(f'{day_name}: שגיאה')
                 elif not slots:
-                    lines.append(f'{day_name}: \u05e2\u05de\u05d5\u05e1')
+                    lines.append(f'{day_name}: עמוס')
                 else:
-                    slot_strs = [f'{sl["start"]}\u2013{sl["end"]}' for sl in slots]
+                    slot_strs = [f'{sl["start"]}–{sl["end"]}' for sl in slots]
                     lines.append(f'{day_name}: {", ".join(slot_strs)}')
             return s.FREE_SLOTS_HEADER + '\n' + '\n'.join(lines)
 
         target, label = resolve_day(period, today)
+
+        # Fallback: try ISO date parse
+        if target is None:
+            try:
+                target = datetime.date.fromisoformat(period)
+            except (ValueError, TypeError):
+                target = today
+
         slots = get_free_slots_for_date(from_number, target)
 
         if slots is None:
@@ -721,12 +511,12 @@ class WhatsAppWebhookView(APIView):
             h = sl['minutes'] // 60
             mn = sl['minutes'] % 60
             if h > 0 and mn > 0:
-                dur = f'{h}\u05e9 {mn}\u05d3'
+                dur = f'{h}ש {mn}ד'
             elif h > 0:
-                dur = f'{h} \u05e9\u05e2\u05d5\u05ea'
+                dur = f'{h} שעות'
             else:
-                dur = f'{sl["minutes"]} \u05d3\u05e7\u05d5\u05ea'
-            lines.append(f'\u2022 {sl["start"]}\u2013{sl["end"]} ({dur})')
+                dur = f'{sl["minutes"]} דקות'
+            lines.append(f'• {sl["start"]}–{sl["end"]} ({dur})')
         return '\n'.join(lines)
 
     def _query_birthdays_msg(self, from_number, period):
@@ -765,20 +555,18 @@ class WhatsAppWebhookView(APIView):
                 return s.NO_BIRTHDAYS_MONTH
             lines = [s.BIRTHDAYS_MONTH_HEADER]
             for b in month_birthdays:
-                lines.append(f'\u2022 {b["summary"]} \u2014 {b["date"]}')
+                lines.append(f'• {b["summary"]} — {b["date"]}')
             return '\n'.join(lines)
 
         if not birthdays:
             return s.NO_BIRTHDAYS
         lines = [s.BIRTHDAYS_HEADER]
         for b in birthdays:
-            lines.append(f'\u2022 {b["summary"]} \u2014 {b["date"]}')
+            lines.append(f'• {b["summary"]} — {b["date"]}')
         return '\n'.join(lines)
 
     # ----------------------------------------------------------------------- #
     # Calendar query helpers — HttpResponse variants (back-compat)
-    # These delegate to the _msg variants above and wrap in _xml().
-    # Existing tests that mock _query_meetings etc. continue to work.
     # ----------------------------------------------------------------------- #
 
     def _query_meetings(self, from_number, period):
@@ -794,28 +582,23 @@ class WhatsAppWebhookView(APIView):
         return _xml(self._query_birthdays_msg(from_number, period))
 
     # ----------------------------------------------------------------------- #
-    # Settings actions
+    # Settings actions (kept for back-compat / external callers)
     # ----------------------------------------------------------------------- #
 
     def _set_timezone(self, from_number, tz_name):
         import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken
-
         CalendarToken.objects.filter(phone_number=from_number).update(timezone=tz_name)
         logger.info('Timezone set to %s for phone=%s', tz_name, from_number)
         return _xml(s.TIMEZONE_SET.format(tz_name=tz_name))
 
     def _disconnect_calendar(self, from_number):
-        import apps.standup.strings_he as s
         from apps.calendar_bot.models import CalendarToken
-
         deleted, _ = CalendarToken.objects.filter(phone_number=from_number).delete()
-        logger.info('Calendar disconnected for phone=%s (deleted %d tokens)', from_number, deleted)
-        msg = (
-            '\u2705 \u05d4\u05d9\u05d5\u05de\u05df \u05e0\u05d5\u05ea\u05e7.\n\n'
-            + _main_menu_text(from_number)
+        logger.info(
+            'Calendar disconnected for phone=%s (deleted %d tokens)', from_number, deleted
         )
-        return _xml(msg)
+        return _xml('✅ היומן נותק.')
 
     def _handle_connect_calendar(self, request, from_number):
         import apps.standup.strings_he as s
@@ -875,9 +658,9 @@ class WhatsAppWebhookView(APIView):
 
         resp = MessagingResponse()
         if not entries.exists():
-            resp.message('\u05d0\u05d9\u05df \u05e8\u05e9\u05d5\u05de\u05d5\u05ea \u05e9\u05d1\u05d5\u05e2 \u05d6\u05d4.')
+            resp.message('אין רשומות שבוע זה.')
         else:
-            lines = [f'\u05e1\u05d9\u05db\u05d5\u05dd \u05e9\u05d1\u05d5\u05e2 {current_week}:\n']
+            lines = [f'סיכום שבוע {current_week}:\n']
             for entry in entries:
                 date_str = entry.created_at.strftime('%Y-%m-%d')
                 lines.append(f'{date_str}: {entry.message}')
@@ -916,10 +699,6 @@ class TwilioStatusCallbackView(APIView):
 
     Receives Twilio message status callbacks and writes delivery events
     to the application log so they appear in Railway logs.
-
-    - No authentication required (status callbacks are server-to-server;
-      they don't carry a Twilio request signature that matches the webhook URL).
-    - Returns HTTP 204 No Content for all valid POST requests.
     """
 
     permission_classes = []
@@ -932,20 +711,11 @@ class TwilioStatusCallbackView(APIView):
         error_message = request.data.get('ErrorMessage', '')
 
         if status in ('sent', 'delivered'):
-            logger.info(
-                '[Twilio] %s \u2192 %s: %s',
-                message_sid,
-                to,
-                status,
-            )
+            logger.info('[Twilio] %s → %s: %s', message_sid, to, status)
         else:
             logger.error(
-                '[Twilio] %s \u2192 %s: %s (error %s: %s)',
-                message_sid,
-                to,
-                status,
-                error_code,
-                error_message,
+                '[Twilio] %s → %s: %s (error %s: %s)',
+                message_sid, to, status, error_code, error_message,
             )
 
         return HttpResponse(status=204)

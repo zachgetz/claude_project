@@ -79,8 +79,11 @@ class WhatsAppWebhookViewTests(TestCase):
     # Connected users: main menu at root
     # ------------------------------------------------------------------
 
-    def test_connected_user_sees_hebrew_main_menu(self):
-        """A connected user sending any text at root sees the Hebrew main menu."""
+    @patch('apps.standup.views.WhatsAppWebhookView._execute_tool')
+    @patch('apps.standup.claude_helper.ask_claude_with_tools')
+    def test_connected_user_gets_nlp_response(self, mock_ask, mock_exec):
+        """A connected user sending any text gets a Claude NLP response."""
+        mock_ask.return_value = {'type': 'text', 'content': 'שלום! איך אוכל לעזור לך?'}
         CalendarToken.objects.create(
             phone_number=self.phone,
             account_email='test@example.com',
@@ -89,12 +92,14 @@ class WhatsAppWebhookViewTests(TestCase):
         )
         response = self._post('Done with review.')
         self.assertEqual(response.status_code, 200)
+        self.assertIn('application/xml', response['Content-Type'])
         content = response.content.decode()
-        # Hebrew main menu header: 'תפריט'
-        self.assertIn('\u05ea\u05e4\u05e8\u05d9\u05d8', content)
+        self.assertIn('שלום', content)
 
-    def test_connected_user_does_not_create_standup_entry(self):
+    @patch('apps.standup.claude_helper.ask_claude_with_tools')
+    def test_connected_user_does_not_create_standup_entry(self, mock_ask):
         """Free text from a connected user must NOT create a StandupEntry."""
+        mock_ask.return_value = {'type': 'text', 'content': 'אוקיי!'}
         CalendarToken.objects.create(
             phone_number=self.phone,
             account_email='test@example.com',

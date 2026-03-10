@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__linear__*",
+      "mcp__github__*",
+      "Bash(*)"
+    ],
+    "deny": []
+  },
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/tzachgetz/Projects/claude_project/scripts/block_env_read.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/tzachgetz/Projects/claude_project/scripts/post_commit_tests.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__linear__linear_create_issue",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/tzachgetz/Projects/claude_project/agents/assign_to_project_hook.py"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__merge_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/tzachgetz/Projects/claude_project/agents/run_tests_on_merge.py"
+          }
+        ]
+      }
+    ]
+  }
+}
