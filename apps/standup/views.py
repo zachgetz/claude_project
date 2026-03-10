@@ -333,16 +333,25 @@ class WhatsAppWebhookView(APIView):
         description = tool_input.get('description')
         location = tool_input.get('location')
         calendar_email = tool_input.get('calendar_email')
+        calendar_label = tool_input.get('calendar_label')
+
+        tokens = list(CalendarToken.objects.filter(phone_number=from_number).order_by('-created_at'))
+
+        # Resolve label → email
+        if calendar_label and not calendar_email:
+            for t in tokens:
+                if t.account_label.lower() == calendar_label.lower():
+                    calendar_email = t.account_email
+                    break
 
         # If no calendar specified and user has multiple — ask which one
-        if not calendar_email:
-            tokens = list(CalendarToken.objects.filter(phone_number=from_number).order_by('-created_at'))
-            if len(tokens) > 1:
-                lines = ['לאיזה יומן להוסיף את האירוע?']
-                for i, t in enumerate(tokens, 1):
-                    lines.append(f'{i}. {t.account_email}')
-                lines.append('ענה עם מספר או שם האימייל.')
-                return '\n'.join(lines)
+        if not calendar_email and len(tokens) > 1:
+            lines = ['לאיזה יומן להוסיף את האירוע?']
+            for i, t in enumerate(tokens, 1):
+                label = t.account_label or t.account_email
+                lines.append(f'{i}. {label} ({t.account_email})')
+            lines.append('ענה עם שם הכינוי, מספר, או כתובת האימייל.')
+            return '\n'.join(lines)
 
         user_tz = get_user_tz(from_number)
         today = datetime.datetime.now(tz=user_tz).date()

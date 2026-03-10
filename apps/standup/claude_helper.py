@@ -86,8 +86,8 @@ TOOLS = [
         "description": (
             "יוצר אירוע חדש ביומן Google. "
             "דרוש: תאריך ISO (YYYY-MM-DD), שעת התחלה (HH:MM), שעת סיום (HH:MM), כותרת. "
-            "אם המשתמש ציין לאיזה יומן (אימייל), כלול את calendar_email. "
-            "אם לא ציין, אל תכלול calendar_email — המערכת תשאל אותו."
+            "אם המשתמש ציין לאיזה יומן (לפי כינוי כמו personal/work או אימייל), כלול calendar_label או calendar_email. "
+            "אם לא ציין, אל תכלול אותם — המערכת תשאל אותו."
         ),
         "input_schema": {
             "type": "object",
@@ -119,6 +119,13 @@ TOOLS = [
                 "calendar_email": {
                     "type": "string",
                     "description": "כתובת האימייל של היומן שבו ליצור את האירוע (אופציונלי)",
+                },
+                "calendar_label": {
+                    "type": "string",
+                    "description": (
+                        "כינוי היומן שבו ליצור את האירוע, לדוגמה: personal, work, אישי, עבודה (אופציונלי). "
+                        "השתמש בזה כשהמשתמש מציין את שם היומן במילים."
+                    ),
                 },
             },
             "required": ["date_description", "start_time", "end_time", "title"],
