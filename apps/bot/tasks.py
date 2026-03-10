@@ -8,12 +8,15 @@ from twilio.rest import Client
 
 logger = logging.getLogger(__name__)
 
+import os as _os
+_BASE = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 MONITORING_COLLECTOR_PROMPT = open(
-    "/Users/tzachgetz/Projects/claude_project/agents/monitoring-collector.md"
+    _os.path.join(_BASE, "agents", "monitoring-collector.md")
 ).read()
 
 MONITORING_DECISION_PROMPT = open(
-    "/Users/tzachgetz/Projects/claude_project/agents/monitoring-decision.md"
+    _os.path.join(_BASE, "agents", "monitoring-decision.md")
 ).read()
 
 
