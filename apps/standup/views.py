@@ -323,6 +323,7 @@ class WhatsAppWebhookView(APIView):
     def _execute_create_event(self, tool_input, from_number):
         """Parse tool_input and call create_event in calendar_service."""
         import apps.standup.strings_he as s
+        from apps.calendar_bot.models import CalendarToken
         from apps.calendar_bot.calendar_service import create_event, get_user_tz
 
         date_desc = tool_input.get('date_description', '')
@@ -331,6 +332,17 @@ class WhatsAppWebhookView(APIView):
         title = tool_input.get('title', '')
         description = tool_input.get('description')
         location = tool_input.get('location')
+        calendar_email = tool_input.get('calendar_email')
+
+        # If no calendar specified and user has multiple — ask which one
+        if not calendar_email:
+            tokens = list(CalendarToken.objects.filter(phone_number=from_number).order_by('-created_at'))
+            if len(tokens) > 1:
+                lines = ['לאיזה יומן להוסיף את האירוע?']
+                for i, t in enumerate(tokens, 1):
+                    lines.append(f'{i}. {t.account_email}')
+                lines.append('ענה עם מספר או שם האימייל.')
+                return '\n'.join(lines)
 
         user_tz = get_user_tz(from_number)
         today = datetime.datetime.now(tz=user_tz).date()
@@ -350,6 +362,7 @@ class WhatsAppWebhookView(APIView):
         ok, error_code = create_event(
             from_number, target_date, start_time, end_time, title,
             description=description, location=location,
+            calendar_email=calendar_email,
         )
         if ok:
             return s.SCHEDULE_CREATED.format(

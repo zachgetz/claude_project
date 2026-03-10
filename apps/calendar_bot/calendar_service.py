@@ -181,7 +181,7 @@ def get_events_for_date(phone_number, target_date, exclude_birthdays=False):
 
 
 def create_event(phone_number, target_date, start_time_str, end_time_str, title,
-                 description=None, location=None):
+                 description=None, location=None, calendar_email=None):
     """
     Create a Google Calendar event for the given phone number.
 
@@ -203,9 +203,10 @@ def create_event(phone_number, target_date, start_time_str, end_time_str, title,
         phone_number, target_date, start_time_str, end_time_str, title,
     )
 
-    token = CalendarToken.objects.filter(
-        phone_number=phone_number
-    ).order_by('-created_at').first()
+    qs = CalendarToken.objects.filter(phone_number=phone_number)
+    if calendar_email:
+        qs = qs.filter(account_email=calendar_email)
+    token = qs.order_by('-created_at').first()
     if token is None:
         return False, 'no_token'
 
