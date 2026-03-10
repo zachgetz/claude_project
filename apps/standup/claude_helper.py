@@ -158,6 +158,33 @@ TOOLS = [
         },
     },
     {
+        "name": "list_calendars",
+        "description": "מחזיר רשימת כל היומנים המחוברים עם הכינוי שלהם",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "rename_calendar",
+        "description": "מגדיר כינוי (שם) ליומן מחובר כדי שיהיה קל לזהות אותו (למשל: אישי, עבודה)",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "calendar_email": {
+                    "type": "string",
+                    "description": "כתובת האימייל של היומן לשינוי שם",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "הכינוי החדש ליומן, לדוגמה: אישי, עבודה, personal, work",
+                },
+            },
+            "required": ["calendar_email", "label"],
+        },
+    },
+    {
         "name": "connect_calendar",
         "description": "מחזיר קישור לחיבור יומן Google חדש",
         "input_schema": {

@@ -293,6 +293,28 @@ class WhatsAppWebhookView(APIView):
         if tool_name == 'create_event':
             return self._execute_create_event(tool_input, from_number)
 
+        if tool_name == 'list_calendars':
+            from apps.calendar_bot.models import CalendarToken
+            tokens = list(CalendarToken.objects.filter(phone_number=from_number).order_by('-created_at'))
+            if not tokens:
+                return 'אין יומנים מחוברים.'
+            lines = ['יומנים מחוברים:']
+            for t in tokens:
+                label = t.account_label or 'ללא כינוי'
+                lines.append(f'{t.account_email} — {label}')
+            return '\n'.join(lines)
+
+        if tool_name == 'rename_calendar':
+            from apps.calendar_bot.models import CalendarToken
+            email = tool_input.get('calendar_email', '')
+            label = tool_input.get('label', '').strip()
+            updated = CalendarToken.objects.filter(
+                phone_number=from_number, account_email=email
+            ).update(account_label=label)
+            if updated:
+                return f'הכינוי של {email} עודכן ל"{label}".'
+            return f'לא נמצא יומן עם הכתובת {email}.'
+
         if tool_name == 'set_timezone':
             tz_name = tool_input.get('timezone_name', 'Asia/Jerusalem')
             from apps.calendar_bot.models import CalendarToken
@@ -337,12 +359,16 @@ class WhatsAppWebhookView(APIView):
 
         tokens = list(CalendarToken.objects.filter(phone_number=from_number).order_by('-created_at'))
 
-        # Resolve label → email (exact match first, then partial)
+        # Resolve label → email (exact, then partial, then email domain)
         if calendar_label and not calendar_email:
             label_lower = calendar_label.lower()
             for t in tokens:
-                stored = t.account_label.lower()
-                if stored == label_lower or label_lower in stored or stored in label_lower:
+                stored = (t.account_label or '').lower()
+                email_lower = t.account_email.lower()
+                if (stored == label_lower
+                        or label_lower in stored
+                        or stored in label_lower
+                        or label_lower in email_lower):
                     calendar_email = t.account_email
                     break
 
@@ -350,8 +376,12 @@ class WhatsAppWebhookView(APIView):
         if not calendar_email and len(tokens) > 1:
             lines = ['לאיזה יומן להוסיף את האירוע?']
             for i, t in enumerate(tokens, 1):
-                lines.append(f'{i}. {t.account_email}')
-            lines.append('ענה עם מספר או שם היומן.')
+                label = t.account_label if t.account_label and t.account_label != 'primary' else ''
+                entry = f'{i}. {t.account_email}'
+                if label:
+                    entry += f' ({label})'
+                lines.append(entry)
+            lines.append('ענה עם מספר או שם הכינוי.')
             return '\n'.join(lines)
 
         user_tz = get_user_tz(from_number)
