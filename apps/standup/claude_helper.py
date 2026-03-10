@@ -165,9 +165,11 @@ def ask_claude_with_tools(user_message: str, history: list) -> dict:
       {'type': 'tool_use', 'name': str, 'input': dict, 'id': str}
     """
     import anthropic
+    import os
 
+    api_key = settings.ANTHROPIC_API_KEY or os.environ.get('ANTHROPIC_API_KEY', '')
     messages = history + [{"role": "user", "content": user_message}]
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=500,
@@ -194,7 +196,9 @@ def ask_claude_with_result(
     Feed the tool result back to Claude and return the final Hebrew reply string.
     """
     import anthropic
+    import os
 
+    api_key = settings.ANTHROPIC_API_KEY or os.environ.get('ANTHROPIC_API_KEY', '')
     messages = history + [
         {"role": "user", "content": user_message},
         {
@@ -219,7 +223,7 @@ def ask_claude_with_result(
             ],
         },
     ]
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=500,
