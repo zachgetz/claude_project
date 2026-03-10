@@ -205,7 +205,7 @@ def create_event(phone_number, target_date, start_time_str, end_time_str, title,
 
     token = CalendarToken.objects.filter(
         phone_number=phone_number
-    ).order_by('created_at').first()
+    ).order_by('-created_at').first()
     if token is None:
         return False, 'no_token'
 
