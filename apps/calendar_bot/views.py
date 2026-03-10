@@ -39,7 +39,6 @@ class CalendarAuthStartView(View):
         flow = get_oauth_flow(redirect_uri=redirect_uri)
         auth_url, state = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true',
             prompt='consent',
         )
         request.session['oauth_state'] = state
