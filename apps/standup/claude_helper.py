@@ -168,7 +168,7 @@ def ask_claude_with_tools(user_message: str, history: list) -> dict:
     import os
 
     api_key = settings.ANTHROPIC_API_KEY or os.environ.get('ANTHROPIC_API_KEY', '')
-    logger.info('ANTHROPIC_API_KEY present=%s len=%d', bool(api_key), len(api_key))
+    logger.warning('ANTHROPIC_API_KEY present=%s len=%d', bool(api_key), len(api_key))
     messages = history + [{"role": "user", "content": user_message}]
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
