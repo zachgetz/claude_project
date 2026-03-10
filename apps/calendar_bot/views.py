@@ -79,7 +79,10 @@ class CalendarAuthCallbackView(View):
         flow = get_oauth_flow(redirect_uri=redirect_uri)
 
         try:
-            flow.fetch_token(code=request.GET.get('code'))
+            flow.fetch_token(
+                code=request.GET.get('code'),
+                check_response_scopes=False,
+            )
         except Exception as e:
             return HttpResponse(f'OAuth error: {e}', status=400)
 
