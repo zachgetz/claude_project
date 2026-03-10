@@ -337,10 +337,12 @@ class WhatsAppWebhookView(APIView):
 
         tokens = list(CalendarToken.objects.filter(phone_number=from_number).order_by('-created_at'))
 
-        # Resolve label → email
+        # Resolve label → email (exact match first, then partial)
         if calendar_label and not calendar_email:
+            label_lower = calendar_label.lower()
             for t in tokens:
-                if t.account_label.lower() == calendar_label.lower():
+                stored = t.account_label.lower()
+                if stored == label_lower or label_lower in stored or stored in label_lower:
                     calendar_email = t.account_email
                     break
 

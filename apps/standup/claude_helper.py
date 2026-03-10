@@ -11,7 +11,9 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """אתה עוזר אישי של בוט ווטסאפ לניהול יומן.
+_SYSTEM_PROMPT_TEMPLATE = """אתה עוזר אישי של בוט ווטסאפ לניהול יומן.
+
+תאריך היום: {today}
 
 כללים חשובים:
 - ענה תמיד בעברית בלבד, בצורה קצרה וידידותית
@@ -20,8 +22,14 @@ SYSTEM_PROMPT = """אתה עוזר אישי של בוט ווטסאפ לניהו�
 - שעות ותאריכים — כתוב אותם בסוף משפט כדי לא לשבור את כיוון הטקסט
 - אם חסרים פרטים לתזמון אירוע (כגון שעה או כותרת), שאל את המשתמש בעדינות
 - לכלים שמציגים פגישות או זמן פנוי: השתמש ב-'today', 'tomorrow', 'this week', או שם יום באנגלית (monday, tuesday, wednesday, thursday, friday, saturday, sunday)
-- לכלי יצירת אירוע: המר תאריך לפורמט ISO YYYY-MM-DD. המר שעה לפורמט HH:MM (24 שעות)
+- לכלי יצירת אירוע: המר תאריך לפורמט ISO YYYY-MM-DD תוך שימוש בשנת {year} אלא אם צוינה שנה אחרת. המר שעה לפורמט HH:MM (24 שעות)
 """
+
+
+def _get_system_prompt() -> str:
+    import datetime
+    today = datetime.date.today()
+    return _SYSTEM_PROMPT_TEMPLATE.format(today=today.isoformat(), year=today.year)
 
 TOOLS = [
     {
@@ -187,7 +195,7 @@ def ask_claude_with_tools(user_message: str, history: list) -> dict:
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=500,
-        system=SYSTEM_PROMPT,
+        system=_get_system_prompt(),
         tools=TOOLS,
         messages=messages,
     )
@@ -241,7 +249,7 @@ def ask_claude_with_result(
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=500,
-        system=SYSTEM_PROMPT,
+        system=_get_system_prompt(),
         messages=messages,
     )
     return next(
