@@ -214,11 +214,13 @@ class WhatsAppWebhookView(APIView):
             result = ask_claude_with_tools(body, history)
 
             if result['type'] == 'tool_use':
+                logger.info('Claude tool_use: tool=%s input=%s', result['name'], result['input'])
                 tool_result = self._execute_tool(
                     result['name'], result['input'], from_number, request
                 )
                 final_reply = ask_claude_with_result(body, result, tool_result, history)
             else:
+                logger.info('Claude text reply (no tool): %r', result['content'][:100])
                 final_reply = result['content']
 
             _save_conversation_history(from_number, body, final_reply)
